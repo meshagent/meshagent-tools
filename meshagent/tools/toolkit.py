@@ -43,26 +43,28 @@ class ToolContext:
         return self._room    
 
 
-def _check_refs(schema, resolver=None, depth=0):
-    if depth > 10:
-        return
-    
-    # Create a resolver from the schema if one is not provided.
+def _check_refs(schema, resolver=None, seen=None):
+    if seen is None:
+        seen = set()
     if resolver is None:
         resolver = RefResolver.from_schema(schema)
     if isinstance(schema, dict):
         for key, value in schema.items():
             if key == "$ref":
+                # If we've already seen this reference, skip to avoid infinite recursion.
+                if value in seen:
+                    continue
+                seen.add(value)
                 try:
                     # Attempt to resolve the reference.
                     resolver.resolve(value)
                 except RefResolutionError as e:
                     raise ValueError(f"Unresolved reference: {value}") from e
             else:
-                _check_refs(value, resolver, depth+1)
+                _check_refs(value, resolver, seen)
     elif isinstance(schema, list):
         for item in schema:
-            _check_refs(item, resolver, depth+1)
+            _check_refs(item, resolver, seen)
 
 class Tool(ABC):
     def __init__(
