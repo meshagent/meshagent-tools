@@ -5,6 +5,7 @@ from meshagent.api.runtime import DocumentRuntime
 from meshagent.api.participant import Participant
 from meshagent.api.room_server_client import RoomException
 from jsonschema import validate
+from jsonschema import Draft7Validator, RefResolutionError, RefResolver
 
 from abc import ABC
 
@@ -16,6 +17,12 @@ from abc import abstractmethod
 from typing import Optional
 
 from meshagent.api.messaging import Response, FileResponse, JsonResponse, TextResponse, ErrorResponse, LinkResponse, EmptyResponse
+
+import logging
+
+logger = logging.getLogger("tools")
+logger.setLevel(logging.INFO)
+
 
 class ToolContext:
     def __init__(self, *, room: RoomClient, caller: Participant, on_behalf_of: Optional[Participant] = None):
@@ -34,6 +41,28 @@ class ToolContext:
     @property
     def room(self):
         return self._room    
+
+
+def _check_refs(schema, resolver=None, depth=0):
+    if depth > 10:
+        return
+    
+    # Create a resolver from the schema if one is not provided.
+    if resolver is None:
+        resolver = RefResolver.from_schema(schema)
+    if isinstance(schema, dict):
+        for key, value in schema.items():
+            if key == "$ref":
+                try:
+                    # Attempt to resolve the reference.
+                    resolver.resolve(value)
+                except RefResolutionError as e:
+                    raise ValueError(f"Unresolved reference: {value}") from e
+            else:
+                _check_refs(value, resolver, depth+1)
+    elif isinstance(schema, list):
+        for item in schema:
+            _check_refs(item, resolver, depth+1)
 
 class Tool(ABC):
     def __init__(
@@ -62,6 +91,26 @@ class Tool(ABC):
         self.rules = rules
         self.thumbnail_url = thumbnail_url
         self.defs = defs
+
+        openai_schema = {
+            **input_schema
+        }
+
+        if defs != None:
+            openai_schema["$defs"] = {
+                **defs
+            }
+
+        
+        try:
+            Draft7Validator.check_schema(openai_schema)
+            _check_refs(openai_schema)
+
+        except Exception as e:
+            logger.error(f"Invalid tool schema {self.name}, {e}")
+            raise RoomException(f"Invalid tool schema {self.name}: {e}")
+
+        
     
     async def execute(self, context: ToolContext, **kwargs):
         raise(Exception("Not implemented"))

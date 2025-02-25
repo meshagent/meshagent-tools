@@ -125,7 +125,8 @@ class RemoteToolkit(Toolkit):
                 "title" : tool.title,
                 "description" : tool.description,
                 "input_schema" : tool.input_schema,
-                "thumbnail_url" : tool.thumbnail_url
+                "thumbnail_url" : tool.thumbnail_url,
+                "defs" : tool.defs,
             }
 
         result = await self._room.send_request("agent.register_toolkit", {
