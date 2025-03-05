@@ -1,6 +1,6 @@
 from .toolkit import JsonResponse, TextResponse, FileResponse, Tool, ToolContext, Toolkit, Response, LinkResponse
 from .blob import Blob, BlobStorage, get_bytes_from_url
-from .hosting import RemoteToolkit, connect_remote_toolkit, RemoteToolkitServer
+from .hosting import RemoteToolkit, connect_remote_toolkit, RemoteToolkitServer, RemoteTool
 from .multi_tool import MultiTool, MultiToolkit
 
 import os

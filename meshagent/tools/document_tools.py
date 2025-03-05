@@ -155,7 +155,7 @@ class GetDocumentJSONTool(Tool):
         
         document = self.documents[path]
 
-        return JsonResponse(document.root.to_json(include_ids=True))
+        return JsonResponse(json=document.root.to_json(include_ids=True))
     
 
 def build_tools(schema: MeshSchema, document_type: str, documents: OpenDocuments):

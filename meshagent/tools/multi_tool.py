@@ -80,12 +80,23 @@ class MultiTool(Tool):
             calls.append(call_subtool(k, v))
 
         output = {}
+        usage = {}
 
         await asyncio.gather(*calls)
 
         for k, v in kwargs.items():
 
-            result = results[k] 
+            result = results[k]
+
+            # aggregate usage values
+            if isinstance(result, Response):
+
+                if result.usage != None:
+
+                    for usage_key, usage_value in result.usage.items():
+                        
+                        usage[usage_key] = usage.get(usage_key, 0) + usage_value
+            
             
             if isinstance(result, FileResponse):
                 return result
@@ -96,7 +107,7 @@ class MultiTool(Tool):
             else:
                 output[k] = result
 
-        return JsonResponse(output)
+        return JsonResponse(json=output, usage=usage)
 
     
     

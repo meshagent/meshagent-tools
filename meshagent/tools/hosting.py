@@ -20,13 +20,30 @@ import signal
 logger = logging.getLogger("hosting")
 logger.setLevel(logging.INFO)
 
+
+class RemoteTool(Tool):
+    def __init__(self, *, name, input_schema, title = None, description = None, rules = None, thumbnail_url = None, defs = None):
+        super().__init__(name=name, input_schema=input_schema, title=title, description=description, rules=rules, thumbnail_url=thumbnail_url, defs=defs)
+        self._room = None
+
+    async def start(self, *, room: RoomClient):
+        if self._room != None:
+            raise RoomException("room is already started")
+          
+        self._room = room      
+
+    async def stop(self): 
+        pass
+
+
 class RemoteToolkit(Toolkit):
-    def __init__(self, *, name: str, tools: list[Tool] = None, title: Optional[str] = None, description: Optional[str] = None):
+    def __init__(self, *, name: str, tools: list[Tool] = None, title: Optional[str] = None, description: Optional[str] = None, thumbnail_url: Optional[str] = None):
         super().__init__(
             name=name,
             description=description,
             title=title,
-            tools=tools
+            tools=tools,
+            thumbnail_url=thumbnail_url,
         )
 
         if tools == None:
@@ -42,6 +59,21 @@ class RemoteToolkit(Toolkit):
         return self._room
 
     async def start(self, *, room: RoomClient):
+        
+        starts = []
+
+        for tool in self.tools:
+
+            if isinstance(tool, RemoteTool):
+
+                starts.append(tool.start(room=room))
+
+        
+        results = await asyncio.gather(*starts, return_exceptions=False)
+
+        for r in results:
+            if isinstance(r, BaseException):
+                logger.error(f"Unable to start remote tool in toolkit {self.name}", exc_info=r)
 
         if self._room != None:
             raise RoomException("room is already started")
@@ -49,11 +81,26 @@ class RemoteToolkit(Toolkit):
         self._room = room
 
         self._room.protocol.register_handler(f"agent.tool_call.{self.name}", self._tool_call)
+
+
         await self._register(public=True)
             
 
     async def stop(self): 
-        
+
+        stops = []
+        for tool in self.tools:
+
+            if isinstance(tool, RemoteTool):
+
+                stops.append(tool.stop())
+
+        results = await asyncio.gather(*stops, return_exceptions=True)
+        for r in results:
+            if isinstance(r, BaseException):
+                logger.error(f"Unable to stop remote tool in toolkit {self.name}", exc_info=r)
+
+
         await self._unregister()
         self._room.protocol.unregister_handler(f"agent.tool_call.{self.name}", self._tool_call)
             

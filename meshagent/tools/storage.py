@@ -47,7 +47,7 @@ class ListFilesTool(Tool):
     async def execute(self, *, context: ToolContext, path: str):
         files = await context.room.storage.list(path=path)
         return JsonResponse(
-            { "files" : list(map(vars, files)) }
+            json={ "files" : list(map(vars, files)) }
         )
 
 class SaveFileFromUrlTool(Tool):
@@ -75,7 +75,7 @@ class SaveFileFromUrlTool(Tool):
         
         if overwrite == False:
             result = context.room.storage.exists(path=path)
-            if result["exists"] == True:
+            if result == True:
                 raise RoomException(f"a file already exists at the path: {path}, try another filename")
 
         handle = await context.room.storage.open(path=path, overwrite=overwrite)
