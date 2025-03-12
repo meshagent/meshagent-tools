@@ -185,7 +185,7 @@ class DocumentOpenTool(Tool):
                     }
                 }
             },
-            title="open a mesh document for writing or reading, makes additional tools available for interacting with the document",
+            title="open a mesh document for writing or reading, makes additional tools available for interacting with the document (only for meshdocuments, does not work with pdfs, office docs, txt files, or images)",
             description="open a mesh document",
             rules=[],
         )    
