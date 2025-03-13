@@ -137,7 +137,7 @@ class RemoteToolkit(Toolkit):
                     )
 
                 if on_behalf_of == None and on_behalf_of_id != None:
-                    caller = RemoteParticipant(
+                    on_behalf_of = RemoteParticipant(
                         id = on_behalf_of_id,
                     )
 
