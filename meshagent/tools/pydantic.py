@@ -3,8 +3,6 @@ from abc import abstractmethod
 import logging
 from typing import Optional
 
-from meshagent.api import RoomClient
-
 from meshagent.tools.toolkit import Tool, Response, ToolContext
 
 logger = logging.getLogger("pydantic_tool")
