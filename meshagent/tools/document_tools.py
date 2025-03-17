@@ -2,8 +2,7 @@ from .toolkit import Toolkit, Tool, TextResponse, JsonResponse, ToolContext
 from meshagent.api.schema import MeshSchema, ElementType, ChildProperty
 from meshagent.api.schema_document import Document
 from meshagent.api import RoomException, RoomClient
-from meshagent.agents import AgentCallContext
-from meshagent.agents.schema import merge
+from meshagent.api.schema_util import merge
 import logging
 import json
 from typing import Optional
