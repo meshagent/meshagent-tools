@@ -1,4 +1,4 @@
-from .toolkit import JsonResponse, TextResponse, FileResponse, Tool, ToolContext, Toolkit, Response, LinkResponse
+from .toolkit import JsonResponse, TextResponse, FileResponse, Tool, ToolContext, Toolkit, Response, LinkResponse, validate_openai_schema
 from .blob import Blob, BlobStorage, get_bytes_from_url
 from .hosting import RemoteToolkit, connect_remote_toolkit, RemoteToolkitServer, RemoteTool
 from .multi_tool import MultiTool, MultiToolkit

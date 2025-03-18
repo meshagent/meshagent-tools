@@ -23,26 +23,6 @@ import logging
 logger = logging.getLogger("tools")
 logger.setLevel(logging.INFO)
 
-
-class ToolContext:
-    def __init__(self, *, room: RoomClient, caller: Participant, on_behalf_of: Optional[Participant] = None):
-        self._room = room
-        self._caller = caller
-        self._on_behalf_of = on_behalf_of
-    
-    @property
-    def caller(self):
-        return self._caller    
-    
-    @property
-    def on_behalf_of(self):
-        return self._on_behalf_of    
-
-    @property
-    def room(self):
-        return self._room    
-
-
 def _check_refs(schema, resolver=None, seen=None):
     if seen is None:
         seen = set()
@@ -65,6 +45,32 @@ def _check_refs(schema, resolver=None, seen=None):
     elif isinstance(schema, list):
         for item in schema:
             _check_refs(item, resolver, seen)
+
+def validate_openai_schema(schema: dict):
+    Draft7Validator.check_schema(schema)
+    _check_refs(schema)
+
+
+class ToolContext:
+    def __init__(self, *, room: RoomClient, caller: Participant, on_behalf_of: Optional[Participant] = None):
+        self._room = room
+        self._caller = caller
+        self._on_behalf_of = on_behalf_of
+    
+    @property
+    def caller(self):
+        return self._caller    
+    
+    @property
+    def on_behalf_of(self):
+        return self._on_behalf_of    
+
+    @property
+    def room(self):
+        return self._room    
+
+
+
 
 class Tool(ABC):
     def __init__(
@@ -105,8 +111,7 @@ class Tool(ABC):
 
         
         try:
-            Draft7Validator.check_schema(openai_schema)
-            _check_refs(openai_schema)
+            validate_openai_schema(openai_schema)
 
         except Exception as e:
             logger.error(f"Invalid tool schema {self.name}, {e}")
