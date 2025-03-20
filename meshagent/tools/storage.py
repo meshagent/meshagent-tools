@@ -47,6 +47,7 @@ class WriteFileTool(Tool):
         handle = await context.room.storage.open(path=path, overwrite=overwrite)
         await context.room.storage.write(handle=handle, data=text.encode("utf-8"))
         await context.room.storage.close(handle=handle)
+        return "the file was saved"
 
     
 class GetFileDownloadUrl(Tool):
