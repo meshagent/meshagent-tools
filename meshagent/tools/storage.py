@@ -4,7 +4,52 @@ import os
 from meshagent.api import RoomException
 from typing import Optional
 
-class DownloadFileTool(Tool):
+class ReadFileTool(Tool):
+    def __init__(self):
+        super().__init__(
+            name="read_file",
+            title="read_file",
+            description="read the contents of a text file (for example a .txt file or a source code file). Will not work with binary files.",
+            input_schema={
+                "type" : "object",
+                "additionalProperties" : False,
+                "required" : ["path"],
+                "properties" : {
+                    "path" : { "type" : "string", "description" : "the full path of the file" }
+                }
+            }
+        )
+
+    async def execute(self, *, context: ToolContext, path: str):
+        file = await context.room.storage.download(path=path)
+        return file.data.decode("utf-8")
+    
+
+class WriteFileTool(Tool):
+    def __init__(self):
+        super().__init__(
+            name="write_file",
+            title="write_file",
+            description="write the contents of a text file (for example a .txt file or a source code file). Will not work with binary files.",
+            input_schema={
+                "type" : "object",
+                "additionalProperties" : False,
+                "required" : ["path", "text", "overwrite"],
+                "properties" : {
+                    "path" : { "type" : "string", "description" : "the full path of the file" },
+                    "text" : { "type" : "string", "description" : "the text to write to the file"  },
+                    "overwrite" : { "type" : "boolean", "description" : "whether to overwrite the current file if it exists at the path"  }
+                }
+            }
+        )
+
+    async def execute(self, *, context: ToolContext, path: str, text: str, overwrite: bool):
+        handle = await context.room.storage.open(path=path, overwrite=overwrite)
+        await context.room.storage.write(handle=handle, data=text.encode("utf-8"))
+        await context.room.storage.close(handle=handle)
+
+    
+class GetFileDownloadUrl(Tool):
     def __init__(self):
         super().__init__(
             name="get_file_download_url",
@@ -92,7 +137,9 @@ class StorageToolkit(Toolkit):
             description="tools for interacting with meshagent room storage",
             tools=[
                 ListFilesTool(),
-                DownloadFileTool(),
+                WriteFileTool(),
+                ReadFileTool(),
+                GetFileDownloadUrl(),
                 SaveFileFromUrlTool(blob_storage=blob_storage),
             ],
         )
