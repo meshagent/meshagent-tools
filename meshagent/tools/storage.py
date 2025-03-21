@@ -8,7 +8,7 @@ class ReadFileTool(Tool):
     def __init__(self):
         super().__init__(
             name="read_file",
-            title="read_file",
+            title="read text file",
             description="read the contents of a text file (for example a .txt file or a source code file). Will not work with binary files.",
             input_schema={
                 "type" : "object",
@@ -29,7 +29,7 @@ class WriteFileTool(Tool):
     def __init__(self):
         super().__init__(
             name="write_file",
-            title="write_file",
+            title="write text file",
             description="write the contents of a text file (for example a .txt file or a source code file). Will not work with binary files.",
             input_schema={
                 "type" : "object",
