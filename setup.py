@@ -28,7 +28,7 @@ setuptools.setup(
         "pyjwt>=2.0.0",
         "pytest>=8.3.4",
         "pytest-asyncio>=0.24.0",
-        "meshagent-api>=0.0.6",
+        "meshagent-api>=0.0.7",
         "aiohttp>=3.11.8",
         "pydantic-ai>=0.0.23",
     ],
