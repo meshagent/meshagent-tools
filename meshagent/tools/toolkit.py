@@ -157,7 +157,7 @@ class Toolkit:
         return await tool.execute(context=context, **arguments)
 
 # a factory creates a toolkit from a RequiredToolkit spec
-factories = dict[
+_factories = dict[
         str, 
         Callable[
             [ToolContext, RequiredToolkit],
@@ -165,10 +165,16 @@ factories = dict[
         ]
     ]()
 
+def register_toolkit_factory(name: str, factory: Callable[[ToolContext, RequiredToolkit], Awaitable[Toolkit]]):
+    if name in _factories:
+        raise Exception(f"{name} is already registered as a toolkit factory")
+    
+    _factories[name] = factory
+
 
 def toolkit_factory(name: str):
 
     result = urllib.parse.urlparse(name)
 
-    return factories.get(result.path, None)
+    return _factories.get(result.path, None)
     

@@ -1,4 +1,4 @@
-from .toolkit import Toolkit, Tool, TextResponse, JsonResponse, ToolContext, factories
+from .toolkit import Toolkit, Tool, TextResponse, JsonResponse, ToolContext, register_toolkit_factory
 from meshagent.api.schema import MeshSchema, ElementType, ChildProperty
 from meshagent.api.schema_document import Document
 from meshagent.api import RoomException, RoomClient, RequiredToolkit
@@ -313,4 +313,5 @@ async def make_document_authoring_toolkit(context: ToolContext, requirement: Req
         tools=all_tools
     )
 
-factories["authoring"] = make_document_authoring_toolkit
+
+register_toolkit_factory("authoring", make_document_authoring_toolkit)
