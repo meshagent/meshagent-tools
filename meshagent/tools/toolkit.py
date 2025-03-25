@@ -1,9 +1,11 @@
+import urllib.parse
 from meshagent.api.protocol import Protocol
 from meshagent.api.room_server_client import RoomClient
 from meshagent.api.participant import Participant
 from meshagent.api.runtime import DocumentRuntime
 from meshagent.api.participant import Participant
 from meshagent.api.room_server_client import RoomException
+from meshagent.api import RequiredToolkit
 from jsonschema import validate
 from jsonschema import Draft7Validator, RefResolutionError, RefResolver
 
@@ -14,9 +16,11 @@ from meshagent.api.messaging import pack_message, split_message_header, split_me
 import json
 from abc import abstractmethod
 
-from typing import Optional
+from typing import Optional, Type, Callable, Dict, Coroutine, TypeVar, Generic, Awaitable
 
 from meshagent.api.messaging import Response, FileResponse, JsonResponse, TextResponse, ErrorResponse, LinkResponse, EmptyResponse
+
+import urllib
 
 import logging
 
@@ -50,13 +54,12 @@ def validate_openai_schema(schema: dict):
     Draft7Validator.check_schema(schema)
     _check_refs(schema)
 
-
 class ToolContext:
     def __init__(self, *, room: RoomClient, caller: Participant, on_behalf_of: Optional[Participant] = None):
         self._room = room
         self._caller = caller
         self._on_behalf_of = on_behalf_of
-    
+
     @property
     def caller(self):
         return self._caller    
@@ -68,8 +71,6 @@ class ToolContext:
     @property
     def room(self):
         return self._room    
-
-
 
 
 class Tool(ABC):
@@ -122,7 +123,6 @@ class Tool(ABC):
     async def execute(self, context: ToolContext, **kwargs):
         raise(Exception("Not implemented"))
 
-
 class Toolkit:
     def __init__(self, *, name: str, tools: list[Tool], rules:list[str]=list[str](), title: Optional[str] = None, description: Optional[str] = None, thumbnail_url: Optional[str] = None):
         self.name = name
@@ -156,3 +156,19 @@ class Toolkit:
         validate(arguments, schema)
         return await tool.execute(context=context, **arguments)
 
+# a factory creates a toolkit from a RequiredToolkit spec
+factories = dict[
+        str, 
+        Callable[
+            [ToolContext, RequiredToolkit],
+            Awaitable[Toolkit]
+        ]
+    ]()
+
+
+def toolkit_factory(name: str):
+
+    result = urllib.parse.urlparse(name)
+
+    return factories.get(result.path, None)
+    

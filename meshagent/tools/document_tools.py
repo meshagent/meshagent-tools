@@ -1,19 +1,19 @@
-from .toolkit import Toolkit, Tool, TextResponse, JsonResponse, ToolContext
+from .toolkit import Toolkit, Tool, TextResponse, JsonResponse, ToolContext, factories
 from meshagent.api.schema import MeshSchema, ElementType, ChildProperty
 from meshagent.api.schema_document import Document
-from meshagent.api import RoomException, RoomClient
+from meshagent.api import RoomException, RoomClient, RequiredToolkit
 from meshagent.api.schema_util import merge
 import logging
 import json
 from typing import Optional
+from urllib import parse
 
 logger = logging.getLogger("document_tools")
 logger.setLevel(logging.INFO)
 
-OpenDocuments = dict[str, Document]
 
 class RootInsertTool(Tool):
-    def __init__(self, *, document_type: str, schema: MeshSchema, element: ElementType, documents: OpenDocuments):
+    def __init__(self, *, document_type: str, schema: MeshSchema, element: ElementType):
         self.element = element
         full_schema = schema.to_json()
         input_schema = merge(schema={
@@ -35,20 +35,22 @@ class RootInsertTool(Tool):
             defs=full_schema["$defs"]
         )
 
-        self.documents = documents
         
 
     async def execute(self, *, context: ToolContext, path: str, **kwargs):
-        if path not in self.documents:
+
+        documents = context.room.sync.get_open_documents()
+        
+        if path not in documents:
             raise RoomException(f"the document is not currently open: {path}")
         
-        document = self.documents[path]
+        document = documents[path]
         document.root.append_json(kwargs)
         return TextResponse(text="The content was inserted")
  
 
 class RemoveElementTool(Tool):
-    def __init__(self, documents: OpenDocuments):
+    def __init__(self):
         super().__init__(
             name="remove_element_by_id",
             title="remove element by id",
@@ -69,13 +71,15 @@ class RemoveElementTool(Tool):
                 }
             })
         )
-        self.documents = documents
 
     async def execute(self, *, context: ToolContext, path: str, id: str):
-        if path not in self.documents:
+
+        documents = context.room.sync.get_open_documents()
+        
+        if path not in documents:
             raise RoomException(f"the document is not currently open: {path}")
         
-        document = self.documents[path]
+        document = documents[path]
 
         node = document.root.get_node_by_id(id)
         if node is None:
@@ -86,7 +90,7 @@ class RemoveElementTool(Tool):
         
 
 class SetAttributeTool(Tool):
-    def __init__(self, documents: OpenDocuments):
+    def __init__(self):
         super().__init__(
             name="set_attribute",
             title="set attribute",
@@ -112,14 +116,15 @@ class SetAttributeTool(Tool):
                 }
             })
         )
-        self.documents = documents
-
 
     async def execute(self, *, context: ToolContext, path: str, id: str, attribute_name: str, attribute_value):
-        if path not in self.documents:
+        
+        documents = context.room.sync.get_open_documents()
+        
+        if path not in documents:
             raise RoomException(f"the document is not currently open: {path}")
         
-        document = self.documents[path]
+        document = documents[path]
 
         node = document.root.get_node_by_id(id)
         if node is None:
@@ -130,7 +135,7 @@ class SetAttributeTool(Tool):
     
 
 class GetDocumentJSONTool(Tool):
-    def __init__(self, documents: OpenDocuments):
+    def __init__(self):
         super().__init__(
             name="get_document",
             title="get document as JSON",
@@ -146,18 +151,20 @@ class GetDocumentJSONTool(Tool):
                 "required" : [ "path" ]
             }
         )
-        self.documents = documents
 
     async def execute(self, *, context: ToolContext, path: str, **kwargs):
-        if path not in self.documents:
+
+        documents = context.room.sync.get_open_documents()
+        
+        if path not in documents:
             raise RoomException(f"the document is not currently open: {path}")
         
-        document = self.documents[path]
+        document = documents[path]
 
         return JsonResponse(json=document.root.to_json(include_ids=True))
     
 
-def build_tools(schema: MeshSchema, document_type: str, documents: OpenDocuments):
+def build_tools(schema: MeshSchema, document_type: str):
     tools = list[Tool]()
 
     for prop in schema.root.properties:
@@ -165,13 +172,13 @@ def build_tools(schema: MeshSchema, document_type: str, documents: OpenDocuments
             child_type : ChildProperty = prop
             for tag_name in child_type.child_tag_names:
                 element = schema.elements_by_tag_name[tag_name]
-                tools.append(RootInsertTool(document_type=document_type, schema=schema,element=element, documents=documents))
+                tools.append(RootInsertTool(document_type=document_type, schema=schema,element=element))
 
     return tools
 
 
 class DocumentOpenTool(Tool):
-    def __init__(self, *, documents: OpenDocuments):
+    def __init__(self):
         super().__init__(
             name="meshagent.document.open",
             input_schema={
@@ -188,22 +195,23 @@ class DocumentOpenTool(Tool):
             description="open a mesh document",
             rules=[],
         )    
-
-        self.documents = documents
     
     async def execute(self, context: ToolContext, path: str):
-        if path in self.documents:
+
+        documents = context.room.sync.get_open_documents()
+        
+        if path in documents:
             raise RoomException(f"the document is already open: {path}")
         
         document = await context.room.sync.open(path=path)
-        self.documents[path] = document
+        documents[path] = document
 
         return None
 
            
 
 class DocumentCloseTool(Tool):
-    def __init__(self, *, documents: OpenDocuments):
+    def __init__(self):
         super().__init__(
             name="meshagent.document.close",
             input_schema={
@@ -221,52 +229,47 @@ class DocumentCloseTool(Tool):
             rules=[],
         )    
 
-        self.documents = documents
     
     async def execute(self, context: ToolContext, path: str):
-        if path not in self.documents:
+
+        documents = context.room.sync.get_open_documents()
+        
+        if path not in documents:
             raise RoomException(f"the document is not open: {path}")
         
-        if path in self.documents:
+        if path in documents:
             await context.room.sync.close(path=path)
-            self.documents.pop(path)
+            documents.pop(path)
 
         return None
 
 
 class DocumentAuthoringToolkit(Toolkit):
-    def __init__(self, 
+    def __init__(self, *, 
         name: str = "meshagent.document_authoring",
         description: str ="Tools for interacting with meshdocuments",
         title: str = "meshdocument core",
     ):
-        open_documents = OpenDocuments()
-        self._open_documents = open_documents
         
         super().__init__(
             name=name,
             title=title,
             description=description,
             tools=[
-                RemoveElementTool(documents=open_documents),
-                SetAttributeTool(documents=open_documents),
-                GetDocumentJSONTool(documents=open_documents),
-                DocumentOpenTool(documents=open_documents),
-                DocumentCloseTool(documents=open_documents),
+                RemoveElementTool(),
+                SetAttributeTool(),
+                GetDocumentJSONTool(),
+                DocumentOpenTool(),
+                DocumentCloseTool(),
             ]
         )
-
-    @property
-    def open_documents(self) -> OpenDocuments:
-        return self._open_documents
 
 
 class DocumentTypeAuthoringToolkit(Toolkit):
     def __init__(self, 
-        base_toolkit: DocumentAuthoringToolkit,
+        *,
         schema: MeshSchema, 
         document_type: str,
-     
     ):
         
         name: str = f"meshagent.document_authoring.{document_type}"
@@ -278,6 +281,36 @@ class DocumentTypeAuthoringToolkit(Toolkit):
             title=title,
             description=description,
             tools=[
-                *build_tools(schema=schema, document_type=document_type, documents=base_toolkit.open_documents)
+                *build_tools(schema=schema, document_type=document_type)
             ]
         )
+
+async def make_document_authoring_toolkit(context: ToolContext, requirement: RequiredToolkit): 
+    
+    all_tools = []
+
+    toolkit = DocumentAuthoringToolkit()
+
+    all_tools.extend(toolkit.tools)
+
+    if requirement.tools != None:
+        for schema_name in requirement.tools:
+            schema_file = await context.room.storage.download(path=f".schemas/{schema_name}.json")
+            
+            schema = MeshSchema.from_json(json.loads(schema_file.data))
+
+            schema_tools = DocumentTypeAuthoringToolkit(
+                schema=schema,
+                document_type=schema_name
+            )
+
+            all_tools.extend(schema_tools.tools)
+    
+    return Toolkit(
+        name="document_authoring",
+        title="document authoring",
+        description="tools for authoring documents",
+        tools=all_tools
+    )
+
+factories["authoring"] = make_document_authoring_toolkit
