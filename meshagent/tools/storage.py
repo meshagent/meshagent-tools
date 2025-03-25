@@ -133,7 +133,7 @@ class SaveFileFromUrlTool(Tool):
 class StorageToolkit(Toolkit):
     def __init__(self, *, blob_storage: Optional[BlobStorage] = None):
         super().__init__(
-            name="meshagent.storage",
+            name="storage",
             title="storage",
             description="tools for interacting with meshagent room storage",
             tools=[
