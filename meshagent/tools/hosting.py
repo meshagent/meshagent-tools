@@ -108,10 +108,11 @@ class RemoteToolkit(Toolkit):
         
         async def do_call():
             # Decode and parse the message
-            message = json.loads(data.decode('utf-8'))
+            message : dict = json.loads(data.decode('utf-8'))
             name = message["name"]
             args = message["arguments"]
             caller_id = message["caller_id"]
+            caller_context = message.get("caller_context", None)
             on_behalf_of_id = message.get("on_behalf_of_id", None)
             try:
                 caller = None
@@ -141,7 +142,7 @@ class RemoteToolkit(Toolkit):
                         id = on_behalf_of_id,
                     )
 
-                context = ToolContext(room=self._room, caller=caller, on_behalf_of=on_behalf_of)
+                context = ToolContext(room=self._room, caller=caller, on_behalf_of=on_behalf_of, caller_context=caller_context)
                 response = await self.execute(context=context, name=name, arguments=args)
                 response = ensure_response(response)
             

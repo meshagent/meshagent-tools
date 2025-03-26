@@ -16,7 +16,7 @@ from meshagent.api.messaging import pack_message, split_message_header, split_me
 import json
 from abc import abstractmethod
 
-from typing import Optional, Type, Callable, Dict, Coroutine, TypeVar, Generic, Awaitable
+from typing import Optional, Type, Callable, Dict, Coroutine, TypeVar, Generic, Awaitable, Any
 
 from meshagent.api.messaging import Response, FileResponse, JsonResponse, TextResponse, ErrorResponse, LinkResponse, EmptyResponse
 
@@ -55,23 +55,28 @@ def validate_openai_schema(schema: dict):
     _check_refs(schema)
 
 class ToolContext:
-    def __init__(self, *, room: RoomClient, caller: Participant, on_behalf_of: Optional[Participant] = None):
+    def __init__(self, *, room: RoomClient, caller: Participant, on_behalf_of: Optional[Participant] = None, caller_context: Optional[Dict[str,Any]] = None):
         self._room = room
         self._caller = caller
         self._on_behalf_of = on_behalf_of
+        self._caller_context = caller_context
 
     @property
-    def caller(self):
+    def caller(self) -> Participant:
         return self._caller    
     
     @property
-    def on_behalf_of(self):
+    def on_behalf_of(self) -> Optional[Participant] | None:
         return self._on_behalf_of    
 
     @property
-    def room(self):
+    def room(self) -> RoomClient:
         return self._room    
 
+    @property
+    def caller_context(self) -> Dict[str,Any]:
+        return self._caller_context
+        
 
 class Tool(ABC):
     def __init__(
@@ -84,22 +89,30 @@ class Tool(ABC):
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
         defs: Optional[dict[str,dict]] = None,
+        supports_context: Optional[bool] = None
     ):
+        
+        if supports_context == None:
+            supports_context = False
 
         if isinstance(input_schema, dict) == False:
             raise Exception("schema must be a dict, got: {type}".format(type=type(input_schema)))
         
         self.name = name
+        
         if title == None:
             title = name
         self.title = title
+        
         if description == None:
             description = ""
+
         self.description = description
         self.input_schema = input_schema
         self.rules = rules
         self.thumbnail_url = thumbnail_url
         self.defs = defs
+        self.supports_context = supports_context
 
         openai_schema = {
             **input_schema
