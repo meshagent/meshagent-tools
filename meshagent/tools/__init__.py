@@ -2,6 +2,7 @@ from .toolkit import JsonResponse, TextResponse, FileResponse, Tool, ToolContext
 from .blob import Blob, BlobStorage, get_bytes_from_url
 from .hosting import RemoteToolkit, connect_remote_toolkit, RemoteToolkitServer, RemoteTool
 from .multi_tool import MultiTool, MultiToolkit
+from .version import __version__
 
 import os
 from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
