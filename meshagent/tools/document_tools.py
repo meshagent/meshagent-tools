@@ -9,7 +9,7 @@ from typing import Optional
 from urllib import parse
 
 logger = logging.getLogger("document_tools")
-logger.setLevel(logging.INFO)
+
 
 
 class RootInsertTool(Tool):

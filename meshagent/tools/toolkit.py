@@ -25,7 +25,7 @@ import urllib
 import logging
 
 logger = logging.getLogger("tools")
-logger.setLevel(logging.INFO)
+
 
 def _check_refs(schema, resolver=None, seen=None):
     if seen is None:
