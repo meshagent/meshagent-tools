@@ -5,6 +5,7 @@ from meshagent.api.participant import Participant
 from meshagent.api.runtime import DocumentRuntime
 from meshagent.api.participant import Participant
 from meshagent.api.room_server_client import RoomException
+from meshagent.api.messaging import ensure_response
 from meshagent.api import RequiredToolkit
 from jsonschema import validate
 from jsonschema import Draft7Validator, RefResolutionError, RefResolver
@@ -130,8 +131,6 @@ class Tool(ABC):
         except Exception as e:
             logger.error(f"Invalid tool schema {self.name}, {e}")
             raise RoomException(f"Invalid tool schema {self.name}: {e}")
-
-        
     
     async def execute(self, context: ToolContext, **kwargs):
         raise(Exception("Not implemented"))
@@ -173,7 +172,7 @@ class Toolkit:
             }
 
         validate(arguments, schema)
-        return await tool.execute(context=context, **arguments)
+        return ensure_response(await tool.execute(context=context, **arguments))
 
 # a factory creates a toolkit from a RequiredToolkit spec
 _factories = dict[
