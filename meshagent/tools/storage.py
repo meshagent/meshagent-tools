@@ -120,7 +120,7 @@ class SaveFileFromUrlTool(Tool):
         blob = await get_bytes_from_url(url=url, blob_storage=self.blob_storage)
         
         if overwrite == False:
-            result = context.room.storage.exists(path=path)
+            result = await context.room.storage.exists(path=path)
             if result == True:
                 raise RoomException(f"a file already exists at the path: {path}, try another filename")
 
