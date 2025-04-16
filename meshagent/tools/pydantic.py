@@ -6,7 +6,7 @@ from typing import Optional
 from meshagent.tools.toolkit import Tool, Response, ToolContext
 
 logger = logging.getLogger("pydantic_tool")
-logger.setLevel(logging.INFO)
+
 
 class PydanticTool[TInput:BaseModel](Tool):
     def __init__(self,

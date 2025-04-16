@@ -18,7 +18,7 @@ import logging
 import signal
 
 logger = logging.getLogger("hosting")
-logger.setLevel(logging.INFO)
+
 
 
 class RemoteTool(Tool):
