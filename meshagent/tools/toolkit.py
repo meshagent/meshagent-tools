@@ -148,12 +148,6 @@ class Toolkit:
         self.rules = rules
         self.thumbnail_url = thumbnail_url
 
-    async def __aenter__(self) -> 'Toolkit':
-        return self
-
-    async def __aexit__(self, exec_type, exec, tb) -> None:
-        return None
-
     def get_tool(self, name: str) -> Tool:
         for tool in self.tools:
             if tool.name == name:
