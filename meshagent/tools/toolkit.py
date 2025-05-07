@@ -132,7 +132,7 @@ class Tool(ABC):
             logger.error(f"Invalid tool schema {self.name}, {e}")
             raise RoomException(f"Invalid tool schema {self.name}: {e}")
     
-    async def execute(self, context: ToolContext, **kwargs):
+    async def execute(self, context: ToolContext, **kwargs) -> Response:
         raise(Exception("Not implemented"))
 
 class Toolkit:
