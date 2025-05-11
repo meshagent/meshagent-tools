@@ -45,8 +45,8 @@ class RootInsertTool(Tool):
             raise RoomException(f"the document is not currently open: {path}")
         
         document = documents[path]
-        document.root.append_json(kwargs)
-        return TextResponse(text="The content was inserted")
+        element = document.root.append_json(kwargs)
+        return TextResponse(text=f"The content was inserted with the id: {element.id}")
  
 
 class RemoveElementTool(Tool):
@@ -131,7 +131,7 @@ class SetAttributeTool(Tool):
             return TextResponse(text="there was no matching node")
         else:
             node[attribute_name] = attribute_value
-            return TextResponse(text="the node was deleted")
+            return TextResponse(text="the node was updated")
     
 
 class GetDocumentJSONTool(Tool):
