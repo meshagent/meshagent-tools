@@ -189,4 +189,4 @@ def toolkit_factory(name: str):
     result = urllib.parse.urlparse(name)
 
     return _factories.get(result.path, None)
-    
+
