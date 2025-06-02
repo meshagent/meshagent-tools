@@ -7,6 +7,8 @@ from openai import NOT_GIVEN
 from typing_extensions import TypeGuard
 from meshagent.api import RoomException
 
+from copy import deepcopy
+
 _EMPTY_SCHEMA = {
     "additionalProperties": False,
     "type": "object",
@@ -18,11 +20,15 @@ _EMPTY_SCHEMA = {
 def ensure_strict_json_schema(
     schema: dict[str, Any],
 ) -> dict[str, Any]:
+    
     """Mutates the given JSON schema to ensure it conforms to the `strict` standard
     that the OpenAI API expects.
     """
     if schema == {}:
         return _EMPTY_SCHEMA
+    
+    schema = deepcopy(schema)
+    
     return _ensure_strict_json_schema(schema, path=(), root=schema)
 
 
@@ -72,6 +78,10 @@ def _ensure_strict_json_schema(
             key: _ensure_strict_json_schema(prop_schema, path=(*path, "properties", key), root=root)
             for key, prop_schema in properties.items()
         }
+
+    if typ == "object" and properties == None:
+        json_schema["required"] = []
+        json_schema["properties"] = {}
 
     # arrays
     # { 'type': 'array', 'items': {...} }
