@@ -2,7 +2,7 @@
 import logging
 
 from meshagent.tools.toolkit import Tool, Toolkit, ToolContext
-from meshagent.api.messaging import ErrorResponse, ensure_response
+from meshagent.api.messaging import ErrorResponse, ensure_response, unpack_message
 from meshagent.api import websocket_protocol, RemoteParticipant, WebhookServer, WebSocketClientProtocol, RoomStartedEvent, RoomEndedEvent, CallEvent, RoomMessage
 from meshagent.api.protocol import Protocol
 from meshagent.api.room_server_client import RoomClient
@@ -108,7 +108,7 @@ class RemoteToolkit(Toolkit):
         
         async def do_call():
             # Decode and parse the message
-            message : dict = json.loads(data.decode('utf-8'))
+            message, _ = unpack_message(data)
             name = message["name"]
             args = message["arguments"]
             caller_id = message["caller_id"]
