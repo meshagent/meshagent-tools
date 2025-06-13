@@ -23,6 +23,10 @@ from meshagent.api.messaging import Response, FileResponse, JsonResponse, TextRe
 
 import urllib
 
+from opentelemetry import trace
+
+tracer = trace.get_tracer("meshagent.tools")
+
 import logging
 
 logger = logging.getLogger("tools")
@@ -155,18 +159,30 @@ class Toolkit:
         raise RoomException(f'a tool with the name "{name}" was not found in the toolkit')
 
     async def execute(self, *, context: ToolContext, name: str, arguments: dict):
-        tool = self.get_tool(name)
+        with tracer.start_as_current_span("toolkit.execute") as span:
 
-        schema = {
-            **tool.input_schema,
-        }
-        if tool.defs != None:
-            schema["$defs"] = {
-                **tool.defs
+            span.set_attributes({
+                "toolkit" : self.name,
+                "tool" : name,
+                "arguments": json.dumps(arguments)
+            })
+
+            tool = self.get_tool(name)
+
+            schema = {
+                **tool.input_schema,
             }
+            if tool.defs != None:
+                schema["$defs"] = {
+                    **tool.defs
+                }
 
-        validate(arguments, schema)
-        return ensure_response(await tool.execute(context=context, **arguments))
+            validate(arguments, schema)
+            response = await tool.execute(context=context, **arguments)
+            response = ensure_response(response)
+
+            span.set_attribute("response_type", response.to_json()["type"])
+            return response
 
 # a factory creates a toolkit from a RequiredToolkit spec
 _factories = dict[
