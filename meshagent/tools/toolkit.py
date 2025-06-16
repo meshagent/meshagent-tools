@@ -78,9 +78,40 @@ class ToolContext:
     @property
     def caller_context(self) -> Dict[str,Any]:
         return self._caller_context
-        
+ 
 
-class Tool(ABC):
+class BaseTool(ABC):
+    def __init__(
+        self,
+        *,
+        name: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        rules: Optional[list[str]] = None,
+        thumbnail_url: Optional[str] = None,
+        supports_context: Optional[bool] = None
+    ):
+        
+        if supports_context == None:
+            supports_context = False
+
+        self.name = name
+        
+        if title == None:
+            title = name
+        self.title = title
+        
+        if description == None:
+            description = ""
+
+        self.description = description
+        self.rules = rules
+        self.thumbnail_url = thumbnail_url
+       
+        self.supports_context = supports_context
+
+
+class Tool(BaseTool):
     def __init__(
         self,
         *,
@@ -93,29 +124,15 @@ class Tool(ABC):
         defs: Optional[dict[str,dict]] = None,
         supports_context: Optional[bool] = None
     ):
-        
-        if supports_context == None:
-            supports_context = False
+        super().__init__(name=name, title=title, description=description, rules = rules, thumbnail_url=thumbnail_url, supports_context=supports_context)
 
         if isinstance(input_schema, dict) == False:
             raise Exception("schema must be a dict, got: {type}".format(type=type(input_schema)))
         
-        self.name = name
         
-        if title == None:
-            title = name
-        self.title = title
-        
-        if description == None:
-            description = ""
-
-        self.description = description
         self.input_schema = input_schema
-        self.rules = rules
-        self.thumbnail_url = thumbnail_url
         self.defs = defs
-        self.supports_context = supports_context
-
+        
         openai_schema = {
             **input_schema
         }
@@ -136,8 +153,9 @@ class Tool(ABC):
     async def execute(self, context: ToolContext, **kwargs) -> Response:
         raise(Exception("Not implemented"))
 
+
 class Toolkit:
-    def __init__(self, *, name: str, tools: list[Tool], rules:list[str]=list[str](), title: Optional[str] = None, description: Optional[str] = None, thumbnail_url: Optional[str] = None):
+    def __init__(self, *, name: str, tools: list[BaseTool], rules:list[str]=list[str](), title: Optional[str] = None, description: Optional[str] = None, thumbnail_url: Optional[str] = None):
         self.name = name
         if title == None:
             title = name
@@ -149,7 +167,7 @@ class Toolkit:
         self.rules = rules
         self.thumbnail_url = thumbnail_url
 
-    def get_tool(self, name: str) -> Tool:
+    def get_tool(self, name: str) -> BaseTool:
         for tool in self.tools:
             if tool.name == name:
                 return tool
