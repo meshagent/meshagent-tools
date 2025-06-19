@@ -122,7 +122,7 @@ class Tool(BaseTool):
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
         defs: Optional[dict[str,dict]] = None,
-        supports_context: Optional[bool] = None
+        supports_context: Optional[bool] = None,
     ):
         super().__init__(name=name, title=title, description=description, rules = rules, thumbnail_url=thumbnail_url, supports_context=supports_context)
 
