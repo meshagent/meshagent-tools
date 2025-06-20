@@ -1,4 +1,5 @@
 from .toolkit import Tool, ToolContext, FileResponse, JsonResponse, LinkResponse, Toolkit
+from .hosting import RemoteToolkit
 from .blob import BlobStorage, get_bytes_from_url
 import os
 from meshagent.api import RoomException
@@ -130,7 +131,7 @@ class SaveFileFromUrlTool(Tool):
         finally:
             await context.room.storage.close(handle=handle)
 
-class StorageToolkit(Toolkit):
+class StorageToolkit(RemoteToolkit):
     def __init__(self, *, blob_storage: Optional[BlobStorage] = None):
         super().__init__(
             name="storage",
