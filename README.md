@@ -3,11 +3,9 @@ The ``meshagent.tools`` package bundles reusable tool and toolkit abstractions p
 
 ---
 
-**Documentation**: [docs.meshagent.com](https://docs.meshagent.com/)
-
 **Website**: [www.meshagent.com](https://www.meshagent.com/)
 
-**MeshAgent Studio**: [www.studio.meshagent.com](https://studio.meshagent.com/)
+**Documentation**: [docs.meshagent.com](https://docs.meshagent.com/)
 
 ---
 
