@@ -48,7 +48,7 @@ Some of the built-in MeshAgent toolkits include:
 - ``DocumentAuthoringToolkit``: Defines tools for manipulating Mesh documents (create document, add element, remove element, etc.)
 
 ---
-Learn more about MeshAgent on our website or check out the docs for more examples!
+### Learn more about MeshAgent on our website or check out the docs for additional examples!
 
 **Website**: [www.meshagent.com](https://www.meshagent.com/)
 
