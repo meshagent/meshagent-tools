@@ -1,6 +1,16 @@
 ## MeshAgent Tools
 The ``meshagent.tools`` package bundles reusable tool and toolkit abstractions plus a set of out of the box MeshAgent toolkits. 
 
+---
+
+**Documentation**: [docs.meshagent.com](https://docs.meshagent.com/)
+
+**Website**: [www.meshagent.com](https://www.meshagent.com/)
+
+**MeshAgent Studio**: [www.studio.meshagent.com](https://studio.meshagent.com/)
+
+---
+
 ### ToolContext and BaseTool
 The ``ToolContext`` tracks the room, caller, and optional "on-behalf-of" participant. The ``BaseTool`` defines metadata used by all tools such as name and description. 
 
