@@ -1,15 +1,6 @@
 ## MeshAgent Tools
 The ``meshagent.tools`` package bundles reusable tool and toolkit abstractions plus a set of out of the box MeshAgent toolkits. 
 
----
-Learn more about MeshAgent on our website or check out the docs for more examples!
-
-**Website**: [www.meshagent.com](https://www.meshagent.com/)
-
-**Documentation**: [docs.meshagent.com](https://docs.meshagent.com/)
-
----
-
 ### ToolContext and BaseTool
 The ``ToolContext`` tracks the room, caller, and optional "on-behalf-of" participant. The ``BaseTool`` defines metadata used by all tools such as name and description. 
 
@@ -55,3 +46,12 @@ class MyNewToolkit(Toolkit):
 Some of the built-in MeshAgent toolkits include: 
 - ``StorageToolkit``: Provides file operations (read, write, list, etc.)
 - ``DocumentAuthoringToolkit``: Defines tools for manipulating Mesh documents (create document, add element, remove element, etc.)
+
+---
+Learn more about MeshAgent on our website or check out the docs for more examples!
+
+**Website**: [www.meshagent.com](https://www.meshagent.com/)
+
+**Documentation**: [docs.meshagent.com](https://docs.meshagent.com/)
+
+---
