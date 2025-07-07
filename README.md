@@ -2,6 +2,7 @@
 The ``meshagent.tools`` package bundles reusable tool and toolkit abstractions plus a set of out of the box MeshAgent toolkits. 
 
 ---
+Learn more about MeshAgent on our website or check out the docs for more examples!
 
 **Website**: [www.meshagent.com](https://www.meshagent.com/)
 
