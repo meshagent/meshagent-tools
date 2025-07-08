@@ -52,7 +52,7 @@ async def get_bytes_from_url(
         # file_name = str(uuid.uuid4())+extension
         return Blob(mime_type=mime_type, data=content)
     elif url.startswith("blob:"):
-        if blob_storage == None:
+        if blob_storage is None:
             raise RoomException("blob storage is not available for this call")
 
         blob = blob_storage.get(url)

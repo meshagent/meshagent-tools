@@ -289,7 +289,7 @@ async def make_document_authoring_toolkit(
 
     all_tools.extend(toolkit.tools)
 
-    if requirement.tools != None:
+    if requirement.tools is not None:
         for schema_name in requirement.tools:
             schema_file = await context.room.storage.download(
                 path=f".schemas/{schema_name}.json"

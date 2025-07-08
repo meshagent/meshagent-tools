@@ -22,20 +22,20 @@ class MultiTool(Tool):
 
         for tool in tools:
             if isinstance(tool, Tool):
-                if name == None:
+                if name is None:
                     name = tool.name
 
-                if title == None:
+                if title is None:
                     title = tool.title
 
-                if description == None:
+                if description is None:
                     description = tool.description
 
-                if thumbnail_url == None:
+                if thumbnail_url is None:
                     thumbnail_url = tool.thumbnail_url
 
-                if tool.rules != None:
-                    if rules == None:
+                if tool.rules is not None:
+                    if rules is None:
                         rules = []
 
                     rules.extend(tool.rules)
@@ -50,9 +50,9 @@ class MultiTool(Tool):
                 if "description" not in properties[prop_name] and tool.description:
                     properties[prop_name]["description"] = tool.description
 
-                if tool.defs != None:
+                if tool.defs is not None:
                     for k, v in tool.defs.items():
-                        if defs == None:
+                        if defs is None:
                             defs = {}
 
                         if k in defs:
@@ -97,7 +97,7 @@ class MultiTool(Tool):
 
             # aggregate usage values
             if isinstance(result, Response):
-                if result.usage != None:
+                if result.usage is not None:
                     for usage_key, usage_value in result.usage.items():
                         usage[usage_key] = usage.get(usage_key, 0) + usage_value
 

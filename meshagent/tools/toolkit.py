@@ -97,16 +97,16 @@ class BaseTool(ABC):
         thumbnail_url: Optional[str] = None,
         supports_context: Optional[bool] = None,
     ):
-        if supports_context == None:
+        if supports_context is None:
             supports_context = False
 
         self.name = name
 
-        if title == None:
+        if title is None:
             title = name
         self.title = title
 
-        if description == None:
+        if description is None:
             description = ""
 
         self.description = description
@@ -148,7 +148,7 @@ class Tool(BaseTool):
 
         openai_schema = {**input_schema}
 
-        if defs != None:
+        if defs is not None:
             openai_schema["$defs"] = {**defs}
 
         try:
@@ -174,10 +174,10 @@ class Toolkit:
         thumbnail_url: Optional[str] = None,
     ):
         self.name = name
-        if title == None:
+        if title is None:
             title = name
         self.title = title
-        if description == None:
+        if description is None:
             description = ""
         self.description = description
         self.tools = tools
@@ -203,7 +203,7 @@ class Toolkit:
             schema = {
                 **tool.input_schema,
             }
-            if tool.defs != None:
+            if tool.defs is not None:
                 schema["$defs"] = {**tool.defs}
 
             validate(arguments, schema)

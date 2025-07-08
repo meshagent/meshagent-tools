@@ -84,7 +84,7 @@ def _ensure_strict_json_schema(
             for key, prop_schema in properties.items()
         }
 
-    if typ == "object" and properties == None:
+    if typ == "object" and properties is None:
         json_schema["required"] = []
         json_schema["properties"] = {}
 

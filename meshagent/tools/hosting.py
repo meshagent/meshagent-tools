@@ -48,7 +48,7 @@ class RemoteTool(Tool):
         self._room = None
 
     async def start(self, *, room: RoomClient):
-        if self._room != None:
+        if self._room is not None:
             raise RoomException("room is already started")
 
         self._room = room
@@ -75,7 +75,7 @@ class RemoteToolkit(Toolkit):
             thumbnail_url=thumbnail_url,
         )
 
-        if tools == None:
+        if tools is None:
             tools = list[Tool]()
 
         self.tools = tools
@@ -102,7 +102,7 @@ class RemoteToolkit(Toolkit):
                     f"Unable to start remote tool in toolkit {self.name}", exc_info=r
                 )
 
-        if self._room != None:
+        if self._room is not None:
             raise RoomException("room is already started")
 
         self._room = room
@@ -151,19 +151,19 @@ class RemoteToolkit(Toolkit):
                         caller = p
                         break
 
-                if on_behalf_of_id != None:
+                if on_behalf_of_id is not None:
                     for p in self.room.messaging.remote_participants:
                         if p.id == on_behalf_of_id:
                             on_behalf_of = p
                             break
 
                 # TODO: should we pass more info?
-                if caller == None:
+                if caller is None:
                     caller = RemoteParticipant(
                         id=caller_id,
                     )
 
-                if on_behalf_of == None and on_behalf_of_id != None:
+                if on_behalf_of is None and on_behalf_of_id is not None:
                     on_behalf_of = RemoteParticipant(
                         id=on_behalf_of_id,
                     )
@@ -286,7 +286,7 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
             validate_webhook_secret=validate_webhook_secret,
         )
 
-        if create_toolkit == None:
+        if create_toolkit is None:
 
             def default_create_toolkit(arguments: dict) -> RemoteToolkit:
                 t = cls(**arguments)
