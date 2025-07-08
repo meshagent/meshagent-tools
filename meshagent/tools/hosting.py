@@ -3,17 +3,15 @@ import logging
 
 from meshagent.tools.toolkit import Tool, Toolkit, ToolContext
 from meshagent.api.messaging import ErrorResponse, ensure_response, unpack_message
-from meshagent.api import websocket_protocol, RemoteParticipant, WebhookServer, WebSocketClientProtocol, RoomStartedEvent, RoomEndedEvent, CallEvent, RoomMessage
+from meshagent.api import websocket_protocol, RemoteParticipant, WebhookServer, WebSocketClientProtocol, CallEvent, RoomMessage
 from meshagent.api.protocol import Protocol
 from meshagent.api.room_server_client import RoomClient
 from meshagent.api.room_server_client import RoomException
 
 from aiohttp import web
 
-import json
 from typing import Optional, Callable
 import asyncio
-import logging
 
 import signal
 

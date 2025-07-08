@@ -1,12 +1,9 @@
 from .toolkit import Toolkit, Tool, TextResponse, JsonResponse, ToolContext, register_toolkit_factory
 from meshagent.api.schema import MeshSchema, ElementType, ChildProperty
-from meshagent.api.schema_document import Document
-from meshagent.api import RoomException, RoomClient, RequiredToolkit
+from meshagent.api import RoomException, RequiredToolkit
 from meshagent.api.schema_util import merge
 import logging
 import json
-from typing import Optional
-from urllib import parse
 
 logger = logging.getLogger("document_tools")
 

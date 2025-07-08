@@ -9,7 +9,6 @@ from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
 from meshagent.api.websocket_protocol import WebSocketClientProtocol
 
 import asyncio
-import os
 import signal
 import base64
 import aiohttp

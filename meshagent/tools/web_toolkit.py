@@ -1,5 +1,5 @@
 from meshagent.tools.toolkit import Toolkit, Tool, TextResponse, ToolContext
-from aiohttp import web, ClientSession
+from aiohttp import ClientSession
 
 class WebToolkit(Toolkit):
     def __init__(self):
