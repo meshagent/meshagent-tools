@@ -1,7 +1,4 @@
-from meshagent.api.messaging import (
-    TextResponse,
-    JsonResponse
-)
+from meshagent.api.messaging import TextResponse, JsonResponse
 
 from .toolkit import (
     Toolkit,
