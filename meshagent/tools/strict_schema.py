@@ -20,15 +20,14 @@ _EMPTY_SCHEMA = {
 def ensure_strict_json_schema(
     schema: dict[str, Any],
 ) -> dict[str, Any]:
-    
     """Mutates the given JSON schema to ensure it conforms to the `strict` standard
     that the OpenAI API expects.
     """
     if schema == {}:
         return _EMPTY_SCHEMA
-    
+
     schema = deepcopy(schema)
-    
+
     return _ensure_strict_json_schema(schema, path=(), root=schema)
 
 
@@ -45,13 +44,17 @@ def _ensure_strict_json_schema(
     defs = json_schema.get("$defs")
     if is_dict(defs):
         for def_name, def_schema in defs.items():
-            _ensure_strict_json_schema(def_schema, path=(*path, "$defs", def_name), root=root)
+            _ensure_strict_json_schema(
+                def_schema, path=(*path, "$defs", def_name), root=root
+            )
 
     definitions = json_schema.get("definitions")
     if is_dict(definitions):
         for definition_name, definition_schema in definitions.items():
             _ensure_strict_json_schema(
-                definition_schema, path=(*path, "definitions", definition_name), root=root
+                definition_schema,
+                path=(*path, "definitions", definition_name),
+                root=root,
             )
 
     typ = json_schema.get("type")
@@ -75,11 +78,13 @@ def _ensure_strict_json_schema(
     if is_dict(properties):
         json_schema["required"] = list(properties.keys())
         json_schema["properties"] = {
-            key: _ensure_strict_json_schema(prop_schema, path=(*path, "properties", key), root=root)
+            key: _ensure_strict_json_schema(
+                prop_schema, path=(*path, "properties", key), root=root
+            )
             for key, prop_schema in properties.items()
         }
 
-    if typ == "object" and properties == None:
+    if typ == "object" and properties is None:
         json_schema["required"] = []
         json_schema["properties"] = {}
 
@@ -87,13 +92,17 @@ def _ensure_strict_json_schema(
     # { 'type': 'array', 'items': {...} }
     items = json_schema.get("items")
     if is_dict(items):
-        json_schema["items"] = _ensure_strict_json_schema(items, path=(*path, "items"), root=root)
+        json_schema["items"] = _ensure_strict_json_schema(
+            items, path=(*path, "items"), root=root
+        )
 
     # unions
     any_of = json_schema.get("anyOf")
     if is_list(any_of):
         json_schema["anyOf"] = [
-            _ensure_strict_json_schema(variant, path=(*path, "anyOf", str(i)), root=root)
+            _ensure_strict_json_schema(
+                variant, path=(*path, "anyOf", str(i)), root=root
+            )
             for i, variant in enumerate(any_of)
         ]
 
@@ -102,12 +111,16 @@ def _ensure_strict_json_schema(
     if is_list(all_of):
         if len(all_of) == 1:
             json_schema.update(
-                _ensure_strict_json_schema(all_of[0], path=(*path, "allOf", "0"), root=root)
+                _ensure_strict_json_schema(
+                    all_of[0], path=(*path, "allOf", "0"), root=root
+                )
             )
             json_schema.pop("allOf")
         else:
             json_schema["allOf"] = [
-                _ensure_strict_json_schema(entry, path=(*path, "allOf", str(i)), root=root)
+                _ensure_strict_json_schema(
+                    entry, path=(*path, "allOf", str(i)), root=root
+                )
                 for i, entry in enumerate(all_of)
             ]
 

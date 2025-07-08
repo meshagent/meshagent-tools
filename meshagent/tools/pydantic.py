@@ -8,19 +8,20 @@ from meshagent.tools.toolkit import Tool, Response, ToolContext
 logger = logging.getLogger("pydantic_tool")
 
 
-class PydanticTool[TInput:BaseModel](Tool):
-    def __init__(self,
+class PydanticTool[TInput: BaseModel](Tool):
+    def __init__(
+        self,
         name: str,
         input_model: TInput,
         title: Optional[str] = None,
-        description: Optional[str] = None
+        description: Optional[str] = None,
     ):
         self.input_model = input_model
-     
+
         super().__init__(
-            name = name,
-            description = description,
-            title = title,
+            name=name,
+            description=description,
+            title=title,
             input_schema=input_model.model_json_schema(),
         )
 
@@ -33,12 +34,7 @@ class PydanticTool[TInput:BaseModel](Tool):
             raise
 
     @abstractmethod
-    async def execute_model(self, *, context: ToolContext, arguments: TInput) -> Response | dict | None | str:
+    async def execute_model(
+        self, *, context: ToolContext, arguments: TInput
+    ) -> Response | dict | None | str:
         pass
-
-
-
-
-
-
-
