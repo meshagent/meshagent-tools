@@ -1,12 +1,11 @@
 from meshagent.tools.toolkit import Toolkit, Tool, TextResponse, ToolContext
-from aiohttp import web, ClientSession
+from aiohttp import ClientSession
+
 
 class WebToolkit(Toolkit):
     def __init__(self):
-        super().__init__(tools=[
-           WebFetchTool()
-        ])
-    
+        super().__init__(tools=[WebFetchTool()])
+
 
 class WebFetchTool(Tool):
     def __init__(self):
@@ -16,16 +15,18 @@ class WebFetchTool(Tool):
             description="gets the text of a web page",
             input_schema={
                 "type": "object",
-                "properties" : {
-                    "url" : { 
+                "properties": {
+                    "url": {
                         "type": "string",
-                        "description" : "the url of the web page (always start it with a proper scheme like https://)"
+                        "description": "the url of the web page (always start it with a proper scheme like https://)",
                     }
                 },
-                "additionalProperties" : False,
-            })
-        
-    async def execute(self,
+                "additionalProperties": False,
+            },
+        )
+
+    async def execute(
+        self,
         *,
         context: ToolContext,
         url: str,
@@ -35,5 +36,6 @@ class WebFetchTool(Tool):
                 body = await resp.text()
 
                 from bs4 import BeautifulSoup
+
                 soup = BeautifulSoup(body, "html.parser")
                 return TextResponse(text=soup.get_text())
