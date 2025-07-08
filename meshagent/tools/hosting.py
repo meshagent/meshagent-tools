@@ -334,7 +334,7 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
 
         def on_done(task: asyncio.Task):
             try:
-                result = task.result()
+                task.result()
             except Exception as e:
                 logger.error("agent encountered an error", exc_info=e)
 

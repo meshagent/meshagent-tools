@@ -136,7 +136,7 @@ class Tool(BaseTool):
             supports_context=supports_context,
         )
 
-        if isinstance(input_schema, dict) == False:
+        if not isinstance(input_schema, dict):
             raise Exception(
                 "schema must be a dict, got: {type}".format(type=type(input_schema))
             )
