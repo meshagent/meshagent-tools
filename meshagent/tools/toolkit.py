@@ -6,7 +6,7 @@ from meshagent.api.messaging import ensure_response
 from meshagent.api import RequiredToolkit
 from jsonschema import validate
 from jsonschema import Draft7Validator, RefResolutionError, RefResolver
-
+import logging
 from abc import ABC
 
 import json
@@ -20,8 +20,6 @@ import urllib
 from opentelemetry import trace
 
 tracer = trace.get_tracer("meshagent.tools")
-
-import logging
 
 logger = logging.getLogger("tools")
 

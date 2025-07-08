@@ -2,7 +2,7 @@ from meshagent.api.messaging import (
     JsonResponse,
     TextResponse,
     FileResponse,
-    LinkResponse
+    LinkResponse,
 )
 
 from .toolkit import (
