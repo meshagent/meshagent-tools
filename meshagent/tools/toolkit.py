@@ -2,7 +2,7 @@ import urllib.parse
 from meshagent.api.room_server_client import RoomClient
 from meshagent.api.participant import Participant
 from meshagent.api.room_server_client import RoomException
-from meshagent.api.messaging import ensure_response
+from meshagent.api.messaging import ensure_response, Request, unpack_request_parts
 from meshagent.api import RequiredToolkit
 from jsonschema import validate
 from jsonschema import Draft7Validator, RefResolutionError, RefResolver
@@ -113,7 +113,6 @@ class BaseTool(ABC):
 
         self.supports_context = supports_context
 
-
 class Tool(BaseTool):
     def __init__(
         self,
@@ -159,6 +158,29 @@ class Tool(BaseTool):
     async def execute(self, context: ToolContext, **kwargs) -> Response:
         raise (Exception("Not implemented"))
 
+class RequestTool(BaseTool):
+    def __init__(
+        self,
+        *,
+        name: str,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        rules: Optional[list[str]] = None,
+        thumbnail_url: Optional[str] = None,
+        supports_context: Optional[bool] = None,
+    ):
+        super().__init__(
+            name=name,
+            title=title,
+            description=description,
+            rules=rules,
+            thumbnail_url=thumbnail_url,
+            supports_context=supports_context,
+        )
+
+    async def execute(self, *, context: ToolContext, request: Request) -> Response:
+        raise (Exception("Not implemented"))
+
 
 class Toolkit:
     def __init__(
@@ -190,7 +212,7 @@ class Toolkit:
             f'a tool with the name "{name}" was not found in the toolkit'
         )
 
-    async def execute(self, *, context: ToolContext, name: str, arguments: dict):
+    async def execute(self, *, context: ToolContext, name: str, arguments: dict, attachment: Optional[bytes]):
         with tracer.start_as_current_span("toolkit.execute") as span:
             span.set_attributes(
                 {"toolkit": self.name, "tool": name, "arguments": json.dumps(arguments)}
@@ -198,15 +220,23 @@ class Toolkit:
 
             tool = self.get_tool(name)
 
-            schema = {
-                **tool.input_schema,
-            }
-            if tool.defs is not None:
-                schema["$defs"] = {**tool.defs}
+            if isinstance(tool, RequestTool):
 
-            validate(arguments, schema)
-            response = await tool.execute(context=context, **arguments)
-            response = ensure_response(response)
+                request = unpack_request_parts(header=arguments, payload=attachment)
+
+                response = await tool.execute(context=context, request=request)
+                response = ensure_response(response)
+            
+            else:
+                schema = {
+                    **tool.input_schema,
+                }
+                if tool.defs is not None:
+                    schema["$defs"] = {**tool.defs}
+
+                validate(arguments, schema)
+                response = await tool.execute(context=context, **arguments)
+                response = ensure_response(response)
 
             span.set_attribute("response_type", response.to_json()["type"])
             return response

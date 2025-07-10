@@ -1,6 +1,6 @@
 import logging
 
-from meshagent.tools.toolkit import Tool, Toolkit, ToolContext
+from meshagent.tools.toolkit import Tool, RequestTool, Toolkit, ToolContext
 from meshagent.api.messaging import ErrorResponse, ensure_response, unpack_message
 from meshagent.api import (
     websocket_protocol,
@@ -62,7 +62,7 @@ class RemoteToolkit(Toolkit):
         self,
         *,
         name: str,
-        tools: list[Tool] = None,
+        tools: list[Tool | RequestTool] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
@@ -136,7 +136,7 @@ class RemoteToolkit(Toolkit):
     ):
         async def do_call():
             # Decode and parse the message
-            message, _ = unpack_message(data)
+            message, attachment = unpack_message(data)
             name = message["name"]
             args = message["arguments"]
             caller_id = message["caller_id"]
@@ -174,9 +174,14 @@ class RemoteToolkit(Toolkit):
                     on_behalf_of=on_behalf_of,
                     caller_context=caller_context,
                 )
-                response = await self.execute(
-                    context=context, name=name, arguments=args
-                )
+                if attachment is None:
+                    response = await self.execute(
+                        context=context, name=name, arguments=args
+                    )
+                else:
+                    response = await self.execute(
+                        context=context, name=name, arguments=args, attachment=attachment
+                    )
                 response = ensure_response(response)
 
             except Exception as e:
@@ -206,13 +211,20 @@ class RemoteToolkit(Toolkit):
             if tool.name in children:
                 raise RoomException(f"duplicate tool name {tool.name}")
 
-            children[tool.name] = {
-                "title": tool.title,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
-                "thumbnail_url": tool.thumbnail_url,
-                "defs": tool.defs,
-            }
+            if isinstance(tool, RequestTool):
+                children[tool.name] = {
+                    "title": tool.title,
+                    "description": tool.description,
+                    "thumbnail_url": tool.thumbnail_url,
+                }
+            else:
+                children[tool.name] = {
+                    "title": tool.title,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                    "thumbnail_url": tool.thumbnail_url,
+                    "defs": tool.defs,
+                }
 
         result = await self._room.send_request(
             "agent.register_toolkit",

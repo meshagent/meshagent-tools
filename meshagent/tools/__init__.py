@@ -1,4 +1,10 @@
 from meshagent.api.messaging import (
+    
+    JsonRequest,
+    TextRequest,
+    FileRequest,
+    LinkRequest,
+    
     JsonResponse,
     TextResponse,
     FileResponse,
@@ -7,6 +13,7 @@ from meshagent.api.messaging import (
 
 from .toolkit import (
     Tool,
+    RequestTool,
     ToolContext,
     Toolkit,
     Response,
@@ -32,11 +39,16 @@ __all__ = [
     RoomClient,
     ParticipantToken,
     WebSocketClientProtocol,
+    JsonRequest,
+    TextRequest,
+    FileRequest,
+    LinkRequest,
     JsonResponse,
     TextResponse,
     FileResponse,
     LinkResponse,
     Tool,
+    RequestTool,
     ToolContext,
     Toolkit,
     Response,
