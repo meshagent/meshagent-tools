@@ -113,6 +113,7 @@ class BaseTool(ABC):
 
         self.supports_context = supports_context
 
+
 class Tool(BaseTool):
     def __init__(
         self,
@@ -157,6 +158,7 @@ class Tool(BaseTool):
 
     async def execute(self, context: ToolContext, **kwargs) -> Response:
         raise (Exception("Not implemented"))
+
 
 class RequestTool(BaseTool):
     def __init__(
@@ -212,7 +214,14 @@ class Toolkit:
             f'a tool with the name "{name}" was not found in the toolkit'
         )
 
-    async def execute(self, *, context: ToolContext, name: str, arguments: dict, attachment: Optional[bytes]):
+    async def execute(
+        self,
+        *,
+        context: ToolContext,
+        name: str,
+        arguments: dict,
+        attachment: Optional[bytes],
+    ):
         with tracer.start_as_current_span("toolkit.execute") as span:
             span.set_attributes(
                 {"toolkit": self.name, "tool": name, "arguments": json.dumps(arguments)}
@@ -221,12 +230,11 @@ class Toolkit:
             tool = self.get_tool(name)
 
             if isinstance(tool, RequestTool):
-
                 request = unpack_request_parts(header=arguments, payload=attachment)
 
                 response = await tool.execute(context=context, request=request)
                 response = ensure_response(response)
-            
+
             else:
                 schema = {
                     **tool.input_schema,

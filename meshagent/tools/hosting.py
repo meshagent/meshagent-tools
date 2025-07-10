@@ -180,7 +180,10 @@ class RemoteToolkit(Toolkit):
                     )
                 else:
                     response = await self.execute(
-                        context=context, name=name, arguments=args, attachment=attachment
+                        context=context,
+                        name=name,
+                        arguments=args,
+                        attachment=attachment,
                     )
                 response = ensure_response(response)
 
