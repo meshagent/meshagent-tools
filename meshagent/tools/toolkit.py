@@ -220,7 +220,7 @@ class Toolkit:
         context: ToolContext,
         name: str,
         arguments: dict,
-        attachment: Optional[bytes],
+        attachment: Optional[bytes] = None,
     ):
         with tracer.start_as_current_span("toolkit.execute") as span:
             span.set_attributes(
