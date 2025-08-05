@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "meshagent-tools"
 description = "Tools for Meshagent"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 keywords = []
 dependencies = [
