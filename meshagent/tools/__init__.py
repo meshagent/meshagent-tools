@@ -15,7 +15,6 @@ from .toolkit import (
     ToolContext,
     Toolkit,
     Response,
-    validate_openai_schema,
     BaseTool,
 )
 from .blob import Blob, BlobStorage, get_bytes_from_url
@@ -51,7 +50,6 @@ __all__ = [
     Toolkit,
     Response,
     LinkResponse,
-    validate_openai_schema,
     BaseTool,
     Blob,
     BlobStorage,

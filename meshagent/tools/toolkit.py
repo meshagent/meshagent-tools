@@ -5,7 +5,6 @@ from meshagent.api.room_server_client import RoomException
 from meshagent.api.messaging import ensure_response, Request, unpack_request_parts
 from meshagent.api import RequiredToolkit
 from jsonschema import validate
-from jsonschema import Draft7Validator, RefResolutionError, RefResolver
 import logging
 from abc import ABC
 
@@ -22,35 +21,6 @@ from opentelemetry import trace
 tracer = trace.get_tracer("meshagent.tools")
 
 logger = logging.getLogger("tools")
-
-
-def _check_refs(schema, resolver=None, seen=None):
-    if seen is None:
-        seen = set()
-    if resolver is None:
-        resolver = RefResolver.from_schema(schema)
-    if isinstance(schema, dict):
-        for key, value in schema.items():
-            if key == "$ref":
-                # If we've already seen this reference, skip to avoid infinite recursion.
-                if value in seen:
-                    continue
-                seen.add(value)
-                try:
-                    # Attempt to resolve the reference.
-                    resolver.resolve(value)
-                except RefResolutionError as e:
-                    raise ValueError(f"Unresolved reference: {value}") from e
-            else:
-                _check_refs(value, resolver, seen)
-    elif isinstance(schema, list):
-        for item in schema:
-            _check_refs(item, resolver, seen)
-
-
-def validate_openai_schema(schema: dict):
-    Draft7Validator.check_schema(schema)
-    _check_refs(schema)
 
 
 class ToolContext:
@@ -148,13 +118,6 @@ class Tool(BaseTool):
 
         if defs is not None:
             openai_schema["$defs"] = {**defs}
-
-        try:
-            validate_openai_schema(openai_schema)
-
-        except Exception as e:
-            logger.error(f"Invalid tool schema {self.name}, {e}")
-            raise RoomException(f"Invalid tool schema {self.name}: {e}")
 
     async def execute(self, context: ToolContext, **kwargs) -> Response:
         raise (Exception("Not implemented"))
