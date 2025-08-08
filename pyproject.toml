@@ -14,7 +14,8 @@ dependencies = [
   "pytest-asyncio~=0.26",
   "meshagent-api~=0.5.7",
   "aiohttp~=3.10",
-  "opentelemetry-distro~=0.54b1"
+  "opentelemetry-distro~=0.54b1",
+  "meshagent-api~=0.5.7"
 ]
 dynamic = ["version", "readme"]
 
