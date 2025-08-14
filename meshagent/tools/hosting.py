@@ -18,7 +18,7 @@ from aiohttp import web
 
 from typing import Optional, Callable
 import asyncio
-
+from warnings import deprecated
 import signal
 
 logger = logging.getLogger("hosting")
@@ -249,6 +249,7 @@ class RemoteToolkit(Toolkit):
         self._registration_id = None
 
 
+@deprecated("use ServiceHost and the cli to connect toolkits")
 async def connect_remote_toolkit(*, room_name: str, toolkit: Toolkit):
     async with RoomClient(
         protocol=websocket_protocol(
