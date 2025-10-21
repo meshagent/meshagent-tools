@@ -11,7 +11,6 @@ from meshagent.api.messaging import (
 
 from .toolkit import (
     Tool,
-    RequestTool,
     ToolContext,
     Toolkit,
     Response,
@@ -45,7 +44,6 @@ __all__ = [
     FileResponse,
     LinkResponse,
     Tool,
-    RequestTool,
     ToolContext,
     Toolkit,
     Response,

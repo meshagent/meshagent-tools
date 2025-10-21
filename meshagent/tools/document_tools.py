@@ -4,13 +4,11 @@ from .toolkit import (
     Toolkit,
     Tool,
     ToolContext,
-    register_toolkit_factory,
 )
 from meshagent.api.schema import MeshSchema, ElementType, ChildProperty
-from meshagent.api import RoomException, RequiredToolkit
+from meshagent.api import RoomException
 from meshagent.api.schema_util import merge
 import logging
-import json
 
 logger = logging.getLogger("document_tools")
 
@@ -278,37 +276,3 @@ class DocumentTypeAuthoringToolkit(Toolkit):
             description=description,
             tools=[*build_tools(schema=schema, document_type=document_type)],
         )
-
-
-async def make_document_authoring_toolkit(
-    context: ToolContext, requirement: RequiredToolkit
-):
-    all_tools = []
-
-    toolkit = DocumentAuthoringToolkit()
-
-    all_tools.extend(toolkit.tools)
-
-    if requirement.tools is not None:
-        for schema_name in requirement.tools:
-            schema_file = await context.room.storage.download(
-                path=f".schemas/{schema_name}.json"
-            )
-
-            schema = MeshSchema.from_json(json.loads(schema_file.data))
-
-            schema_tools = DocumentTypeAuthoringToolkit(
-                schema=schema, document_type=schema_name
-            )
-
-            all_tools.extend(schema_tools.tools)
-
-    return Toolkit(
-        name="document_authoring",
-        title="document authoring",
-        description="tools for authoring documents",
-        tools=all_tools,
-    )
-
-
-register_toolkit_factory("authoring", make_document_authoring_toolkit)

@@ -1,6 +1,6 @@
 import logging
 
-from meshagent.tools.toolkit import Tool, RequestTool, Toolkit, ToolContext
+from meshagent.tools.toolkit import Tool, Toolkit, ToolContext
 from meshagent.api.messaging import ErrorResponse, ensure_response, unpack_message
 from meshagent.api import (
     websocket_protocol,
@@ -62,7 +62,7 @@ class RemoteToolkit(Toolkit):
         self,
         *,
         name: str,
-        tools: list[Tool | RequestTool] = None,
+        tools: list[Tool] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
@@ -214,20 +214,13 @@ class RemoteToolkit(Toolkit):
             if tool.name in children:
                 raise RoomException(f"duplicate tool name {tool.name}")
 
-            if isinstance(tool, RequestTool):
-                children[tool.name] = {
-                    "title": tool.title,
-                    "description": tool.description,
-                    "thumbnail_url": tool.thumbnail_url,
-                }
-            else:
-                children[tool.name] = {
-                    "title": tool.title,
-                    "description": tool.description,
-                    "input_schema": tool.input_schema,
-                    "thumbnail_url": tool.thumbnail_url,
-                    "defs": tool.defs,
-                }
+            children[tool.name] = {
+                "title": tool.title,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+                "thumbnail_url": tool.thumbnail_url,
+                "defs": tool.defs,
+            }
 
         result = await self._room.send_request(
             "agent.register_toolkit",

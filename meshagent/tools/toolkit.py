@@ -1,20 +1,17 @@
-import urllib.parse
 from meshagent.api.room_server_client import RoomClient
 from meshagent.api.participant import Participant
 from meshagent.api.room_server_client import RoomException
-from meshagent.api.messaging import ensure_response, Request, unpack_request_parts
-from meshagent.api import RequiredToolkit
+from meshagent.api.messaging import ensure_response
 from jsonschema import validate
 import logging
 from abc import ABC
 
 import json
 
-from typing import Optional, Callable, Dict, Awaitable, Any
+from typing import Optional, Dict, Any
 
 from meshagent.api.messaging import Response
 
-import urllib
 
 from opentelemetry import trace
 
@@ -123,30 +120,6 @@ class Tool(BaseTool):
         raise (Exception("Not implemented"))
 
 
-class RequestTool(BaseTool):
-    def __init__(
-        self,
-        *,
-        name: str,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        rules: Optional[list[str]] = None,
-        thumbnail_url: Optional[str] = None,
-        supports_context: Optional[bool] = None,
-    ):
-        super().__init__(
-            name=name,
-            title=title,
-            description=description,
-            rules=rules,
-            thumbnail_url=thumbnail_url,
-            supports_context=supports_context,
-        )
-
-    async def execute(self, *, context: ToolContext, request: Request) -> Response:
-        raise (Exception("Not implemented"))
-
-
 class Toolkit:
     def __init__(
         self,
@@ -192,41 +165,15 @@ class Toolkit:
 
             tool = self.get_tool(name)
 
-            if isinstance(tool, RequestTool):
-                request = unpack_request_parts(header=arguments, payload=attachment)
+            schema = {
+                **tool.input_schema,
+            }
+            if tool.defs is not None:
+                schema["$defs"] = {**tool.defs}
 
-                response = await tool.execute(context=context, request=request)
-                response = ensure_response(response)
-
-            else:
-                schema = {
-                    **tool.input_schema,
-                }
-                if tool.defs is not None:
-                    schema["$defs"] = {**tool.defs}
-
-                validate(arguments, schema)
-                response = await tool.execute(context=context, **arguments)
-                response = ensure_response(response)
+            validate(arguments, schema)
+            response = await tool.execute(context=context, **arguments)
+            response = ensure_response(response)
 
             span.set_attribute("response_type", response.to_json()["type"])
             return response
-
-
-# a factory creates a toolkit from a RequiredToolkit spec
-_factories = dict[str, Callable[[ToolContext, RequiredToolkit], Awaitable[Toolkit]]]()
-
-
-def register_toolkit_factory(
-    name: str, factory: Callable[[ToolContext, RequiredToolkit], Awaitable[Toolkit]]
-):
-    if name in _factories:
-        raise Exception(f"{name} is already registered as a toolkit factory")
-
-    _factories[name] = factory
-
-
-def toolkit_factory(name: str):
-    result = urllib.parse.urlparse(name)
-
-    return _factories.get(result.path, None)
