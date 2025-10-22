@@ -7,16 +7,21 @@ from meshagent.api.messaging import (
     TextResponse,
     FileResponse,
     LinkResponse,
+    Response,
 )
 
-from .toolkit import (
-    Tool,
+from .blob import get_bytes_from_url
+
+from .tool import (
     ToolContext,
-    Toolkit,
-    Response,
+    Tool,
     BaseTool,
 )
-from .blob import Blob, BlobStorage, get_bytes_from_url
+
+from .provider import ToolProvider, make_tools
+
+from .toolkit import Toolkit
+
 from .hosting import (
     RemoteToolkit,
     connect_remote_toolkit,
@@ -49,14 +54,14 @@ __all__ = [
     Response,
     LinkResponse,
     BaseTool,
-    Blob,
-    BlobStorage,
-    get_bytes_from_url,
     RemoteToolkit,
     connect_remote_toolkit,
     RemoteToolkitServer,
     RemoteTool,
     MultiTool,
     MultiToolkit,
+    ToolProvider,
+    make_tools,
+    get_bytes_from_url,
     __version__,
 ]

@@ -1,5 +1,5 @@
 from meshagent.api.messaging import TextResponse
-from meshagent.tools.toolkit import Toolkit, Tool, ToolContext
+from meshagent.tools import Toolkit, Tool, ToolContext
 from aiohttp import ClientSession
 
 

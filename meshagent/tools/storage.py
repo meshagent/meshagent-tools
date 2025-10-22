@@ -1,10 +1,10 @@
 from meshagent.api.messaging import JsonResponse, LinkResponse
-from .toolkit import Tool, ToolContext
+from .tool import Tool
+from .toolkit import ToolContext
 from .hosting import RemoteToolkit
-from .blob import BlobStorage, get_bytes_from_url
 import os
 from meshagent.api import RoomException
-from typing import Optional
+from .blob import get_bytes_from_url
 
 
 class ReadFileTool(Tool):
@@ -112,7 +112,7 @@ class ListFilesTool(Tool):
 
 
 class SaveFileFromUrlTool(Tool):
-    def __init__(self, blob_storage: Optional[BlobStorage] = None):
+    def __init__(self):
         super().__init__(
             name="save_file_from_url",
             title="save file from url",
@@ -137,12 +137,11 @@ class SaveFileFromUrlTool(Tool):
                 },
             },
         )
-        self.blob_storage = blob_storage
 
     async def execute(
         self, *, context: ToolContext, url: str, path: str, overwrite: bool
     ):
-        blob = await get_bytes_from_url(url=url, blob_storage=self.blob_storage)
+        blob = await get_bytes_from_url(url=url)
 
         if not overwrite:
             result = await context.room.storage.exists(path=path)
@@ -159,7 +158,7 @@ class SaveFileFromUrlTool(Tool):
 
 
 class StorageToolkit(RemoteToolkit):
-    def __init__(self, *, blob_storage: Optional[BlobStorage] = None):
+    def __init__(self):
         super().__init__(
             name="storage",
             title="storage",
@@ -169,6 +168,6 @@ class StorageToolkit(RemoteToolkit):
                 WriteFileTool(),
                 ReadFileTool(),
                 GetFileDownloadUrl(),
-                SaveFileFromUrlTool(blob_storage=blob_storage),
+                SaveFileFromUrlTool(),
             ],
         )

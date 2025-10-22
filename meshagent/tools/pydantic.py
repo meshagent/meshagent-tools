@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from meshagent.api.messaging import Response
-from meshagent.tools.toolkit import Tool, ToolContext
+from meshagent.tools import Tool, ToolContext
 
 logger = logging.getLogger("pydantic_tool")
 

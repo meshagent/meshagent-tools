@@ -1,10 +1,12 @@
 from meshagent.api.messaging import TextResponse, JsonResponse
 
-from .toolkit import (
-    Toolkit,
+from .tool import (
     Tool,
     ToolContext,
 )
+
+from .toolkit import Toolkit
+
 from meshagent.api.schema import MeshSchema, ElementType, ChildProperty
 from meshagent.api import RoomException
 from meshagent.api.schema_util import merge

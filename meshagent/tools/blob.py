@@ -1,8 +1,6 @@
 from uuid import uuid4
 import base64
 import aiohttp
-from meshagent.api import RoomException
-from typing import Optional
 
 
 class Blob:
@@ -35,9 +33,7 @@ class BlobStorage:
         return self._blobs[uri]
 
 
-async def get_bytes_from_url(
-    *, url: str, blob_storage: Optional[BlobStorage] = None
-) -> Blob:
+async def get_bytes_from_url(*, url: str) -> Blob:
     if url.startswith("data:"):
         parts = url.split(",", 1)
         # mime_type = None
@@ -51,13 +47,6 @@ async def get_bytes_from_url(
         # extension = mimetypes.guess_extension(mime_type)
         # file_name = str(uuid.uuid4())+extension
         return Blob(mime_type=mime_type, data=content)
-    elif url.startswith("blob:"):
-        if blob_storage is None:
-            raise RoomException("blob storage is not available for this call")
-
-        blob = blob_storage.get(url)
-        return blob
-
     else:
         async with aiohttp.ClientSession() as session:
             async with session.get(url=url) as response:

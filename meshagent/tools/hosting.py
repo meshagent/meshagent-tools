@@ -1,6 +1,6 @@
 import logging
 
-from meshagent.tools.toolkit import Tool, Toolkit, ToolContext
+from meshagent.tools import Tool, Toolkit, ToolContext
 from meshagent.api.messaging import ErrorResponse, ensure_response, unpack_message
 from meshagent.api import (
     websocket_protocol,
