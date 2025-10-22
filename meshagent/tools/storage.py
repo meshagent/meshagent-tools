@@ -12,7 +12,7 @@ class ReadFileTool(Tool):
         super().__init__(
             name="read_file",
             title="read text file",
-            description="read the contents of a text file (for example a .txt file or a source code file). Will not work with binary files.",
+            description="read the contents of a file",
             input_schema={
                 "type": "object",
                 "additionalProperties": False,
@@ -27,8 +27,7 @@ class ReadFileTool(Tool):
         )
 
     async def execute(self, *, context: ToolContext, path: str):
-        file = await context.room.storage.download(path=path)
-        return file.data.decode("utf-8")
+        return await context.room.storage.download(path=path)
 
 
 class WriteFileTool(Tool):
