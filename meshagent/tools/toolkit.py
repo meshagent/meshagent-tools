@@ -6,7 +6,7 @@ import logging
 import json
 
 from typing import Optional, Literal
-from meshagent.tools.provider import ToolProvider, ToolConfig
+from meshagent.tools.config import ToolkitConfig
 from meshagent.tools.tool import ToolContext, BaseTool
 
 from opentelemetry import trace
@@ -16,7 +16,7 @@ tracer = trace.get_tracer("meshagent.tools")
 logger = logging.getLogger("tools")
 
 
-class ToolkitConfig(ToolConfig):
+class ToolkitConfig(ToolkitConfig):
     toolkit: str
     tool: str
 
@@ -28,7 +28,15 @@ def make_basic_toolkit_config_cls(toolkit: "Toolkit"):
     return CustomToolkitConfig
 
 
-class Toolkit(ToolProvider):
+class ToolkitBuilder:
+    def __init__(self, *, name: str, type: type):
+        self.name = name
+        self.type = type
+
+    def make(self, *, model: str, config: ToolkitConfig) -> "Toolkit": ...
+
+
+class Toolkit(ToolkitBuilder):
     def __init__(
         self,
         *,
@@ -87,11 +95,32 @@ class Toolkit(ToolProvider):
             return response
 
     def make(self, *, model: str, config: ToolkitConfig):
-        if config.name == self.name:
-            for t in self.tools:
-                if t.name == config.tool:
-                    return t
+        return self
 
-        raise RoomException(
-            f"tool '{config.tool}' not found in toolkit '{config.toolkit}'"
-        )
+
+def make_tools(
+    *, model: str, providers: list[ToolkitBuilder], tools: list[ToolkitConfig]
+) -> list[Toolkit]:
+    result = []
+    if tools is not None:
+        for config in tools:
+            found = False
+            if isinstance(config, dict):
+                for t in providers:
+                    if t.name == config["name"]:
+                        config = t.type.model_validate(config)
+                        result.append(t.make(model=model, config=config))
+                        found = True
+                        break
+
+            else:
+                for t in providers:
+                    if t.type is type(config):
+                        result.append(t.make(model=model, config=config))
+                        found = True
+                        break
+
+            if not found:
+                raise RoomException(f"tool cannot be configured: {config}")
+
+    return result

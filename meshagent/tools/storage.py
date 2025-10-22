@@ -1,10 +1,12 @@
 from meshagent.api.messaging import JsonResponse, LinkResponse
+from .config import ToolkitConfig
 from .tool import Tool
-from .toolkit import ToolContext
-from .hosting import RemoteToolkit
+from .toolkit import ToolContext, ToolkitBuilder
+from .hosting import RemoteToolkit, Toolkit
 import os
 from meshagent.api import RoomException
 from .blob import get_bytes_from_url
+from typing import Literal
 
 
 class ReadFileTool(Tool):
@@ -170,3 +172,15 @@ class StorageToolkit(RemoteToolkit):
                 SaveFileFromUrlTool(),
             ],
         )
+
+
+class StorageToolkitConfig(ToolkitConfig):
+    name: str = Literal["storage"]
+
+
+class StorageToolkitBuilder(ToolkitBuilder):
+    def __init__(self):
+        super().__init__(name="storage", type=StorageToolkitConfig)
+
+    def make(self, *, model: str, config: ToolkitConfig) -> Toolkit:
+        return StorageToolkit()
