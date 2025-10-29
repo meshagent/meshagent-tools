@@ -66,6 +66,7 @@ class RemoteToolkit(Toolkit):
         title: Optional[str] = None,
         description: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
+        public: bool = True,
     ):
         super().__init__(
             name=name,
@@ -82,6 +83,7 @@ class RemoteToolkit(Toolkit):
         self._registration_id = None
 
         self._room = None
+        self.public = public
 
     @property
     def room(self):
@@ -111,7 +113,7 @@ class RemoteToolkit(Toolkit):
             f"agent.tool_call.{self.name}", self._tool_call
         )
 
-        await self._register(public=True)
+        await self._register(public=self.public)
 
     async def stop(self):
         stops = []
