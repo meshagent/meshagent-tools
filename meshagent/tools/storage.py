@@ -109,7 +109,9 @@ class ListFilesTool(Tool):
 
     async def execute(self, *, context: ToolContext, path: str):
         files = await context.room.storage.list(path=path)
-        return JsonResponse(json={"files": list(map(vars, files))})
+        return JsonResponse(
+            json={"files": list([f.model_dump(mode="json") for f in files])}
+        )
 
 
 class SaveFileFromUrlTool(Tool):
