@@ -13,7 +13,7 @@ class ReadFileTool(Tool):
     def __init__(self):
         super().__init__(
             name="read_file",
-            title="read text file",
+            title="read a file file",
             description="read the contents of a file",
             input_schema={
                 "type": "object",
@@ -170,7 +170,6 @@ class StorageToolkit(RemoteToolkit):
                 ListFilesTool(),
                 WriteFileTool(),
                 ReadFileTool(),
-                GetFileDownloadUrl(),
                 SaveFileFromUrlTool(),
             ],
         )
