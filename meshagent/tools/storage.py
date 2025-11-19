@@ -7,7 +7,6 @@ import os
 from meshagent.api import RoomException
 from .blob import get_bytes_from_url
 from typing import Literal
-import json
 
 
 class ReadFileTool(Tool):
@@ -110,7 +109,9 @@ class ListFilesTool(Tool):
 
     async def execute(self, *, context: ToolContext, path: str):
         files = await context.room.storage.list(path=path)
-        return JsonResponse(json={"files": list([json.dumps(f) for f in files])})
+        return JsonResponse(
+            json={"files": list([f.model_dump(mode="json") for f in files])}
+        )
 
 
 class SaveFileFromUrlTool(Tool):
