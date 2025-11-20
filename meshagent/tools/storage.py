@@ -1,4 +1,4 @@
-from meshagent.api.messaging import JsonResponse, LinkResponse
+from meshagent.api.messaging import JsonResponse, LinkResponse, FileResponse
 from .config import ToolkitConfig
 from .tool import Tool
 from .toolkit import ToolContext, ToolkitBuilder
@@ -7,7 +7,8 @@ import os
 from meshagent.api import RoomException
 from .blob import get_bytes_from_url
 from typing import Literal
-
+import json
+import os.path
 
 class ReadFileTool(Tool):
     def __init__(self):
@@ -29,7 +30,18 @@ class ReadFileTool(Tool):
         )
 
     async def execute(self, *, context: ToolContext, path: str):
-        return await context.room.storage.download(path=path)
+        filename = os.path.basename(path)
+        _, extension = os.path.splitext(path)
+        if await context.room.storage.exists(
+            path=f".schemas/{extension.lstrip('.')}.json"
+        ):
+            return FileResponse(
+                mime_type="application/json",
+                name=filename,
+                data=json.dumps(await context.room.sync.describe(path=path)).encode()
+            )
+        else:
+            return await context.room.storage.download(path=path)
 
 
 class WriteFileTool(Tool):
