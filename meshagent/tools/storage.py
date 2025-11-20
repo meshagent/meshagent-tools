@@ -10,6 +10,7 @@ from typing import Literal
 import json
 import os.path
 
+
 class ReadFileTool(Tool):
     def __init__(self):
         super().__init__(
@@ -38,7 +39,7 @@ class ReadFileTool(Tool):
             return FileResponse(
                 mime_type="application/json",
                 name=filename,
-                data=json.dumps(await context.room.sync.describe(path=path)).encode()
+                data=json.dumps(await context.room.sync.describe(path=path)).encode(),
             )
         else:
             return await context.room.storage.download(path=path)
