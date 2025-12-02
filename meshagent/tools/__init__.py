@@ -20,7 +20,7 @@ from .tool import (
 
 from .config import ToolkitConfig
 
-from .toolkit import Toolkit, ToolkitBuilder, make_tools
+from .toolkit import Toolkit, ToolkitBuilder, make_toolkits
 
 from .hosting import (
     RemoteToolkit,
@@ -61,7 +61,7 @@ __all__ = [
     MultiTool,
     MultiToolkit,
     ToolkitBuilder,
-    make_tools,
+    make_toolkits,
     ToolkitConfig,
     get_bytes_from_url,
     __version__,
