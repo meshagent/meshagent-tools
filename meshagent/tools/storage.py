@@ -175,7 +175,7 @@ class SaveFileFromUrlTool(Tool):
 
 class StorageToolkit(RemoteToolkit):
     def __init__(self, read_only: bool = False):
-        if read_only:
+        if not read_only:
             tools = [
                 ListFilesTool(),
                 WriteFileTool(),
