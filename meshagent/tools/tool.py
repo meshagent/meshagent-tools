@@ -3,7 +3,7 @@ from meshagent.api.participant import Participant
 import logging
 from abc import ABC
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 
 from meshagent.api.messaging import Response
 
@@ -23,11 +23,13 @@ class ToolContext:
         caller: Participant,
         on_behalf_of: Optional[Participant] = None,
         caller_context: Optional[Dict[str, Any]] = None,
+        event_handler: Optional[Callable[[dict], None]] = None,
     ):
         self._room = room
         self._caller = caller
         self._on_behalf_of = on_behalf_of
         self._caller_context = caller_context
+        self._event_handler = event_handler
 
     @property
     def caller(self) -> Participant:
@@ -44,6 +46,10 @@ class ToolContext:
     @property
     def caller_context(self) -> Dict[str, Any]:
         return self._caller_context
+
+    def emit(self, event: dict):
+        if self._event_handler is not None:
+            self._event_handler(event)
 
 
 class BaseTool(ABC):

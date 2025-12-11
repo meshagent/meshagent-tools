@@ -174,17 +174,24 @@ class SaveFileFromUrlTool(Tool):
 
 
 class StorageToolkit(RemoteToolkit):
-    def __init__(self):
-        super().__init__(
-            name="storage",
-            title="storage",
-            description="tools for interacting with meshagent room storage",
-            tools=[
+    def __init__(self, read_only: bool = False):
+        if not read_only:
+            tools = [
                 ListFilesTool(),
                 WriteFileTool(),
                 ReadFileTool(),
                 SaveFileFromUrlTool(),
-            ],
+            ]
+        else:
+            tools = [
+                ListFilesTool(),
+                ReadFileTool(),
+            ]
+        super().__init__(
+            name="storage",
+            title="storage",
+            description="tools for interacting with meshagent room storage",
+            tools=tools,
         )
 
 

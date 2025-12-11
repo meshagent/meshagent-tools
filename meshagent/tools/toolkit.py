@@ -98,7 +98,7 @@ class Toolkit(ToolkitBuilder):
         return self
 
 
-def make_tools(
+def make_toolkits(
     *, model: str, providers: list[ToolkitBuilder], tools: list[ToolkitConfig]
 ) -> list[Toolkit]:
     result = []
