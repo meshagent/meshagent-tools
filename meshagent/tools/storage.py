@@ -1,4 +1,5 @@
 from meshagent.api.messaging import JsonResponse, LinkResponse, FileResponse
+from meshagent.api import RoomClient
 from .config import ToolkitConfig
 from .tool import Tool
 from .toolkit import ToolContext, ToolkitBuilder
@@ -203,5 +204,7 @@ class StorageToolkitBuilder(ToolkitBuilder):
     def __init__(self):
         super().__init__(name="storage", type=StorageToolkitConfig)
 
-    def make(self, *, model: str, config: ToolkitConfig) -> Toolkit:
+    async def make(
+        self, *, room: RoomClient, model: str, config: ToolkitConfig
+    ) -> Toolkit:
         return StorageToolkit()

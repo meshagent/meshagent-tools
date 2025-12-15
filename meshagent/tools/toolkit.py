@@ -1,5 +1,6 @@
 from meshagent.api.room_server_client import RoomException
 from meshagent.api.messaging import ensure_response
+from meshagent.api import RoomClient
 from jsonschema import validate
 import logging
 
@@ -33,7 +34,9 @@ class ToolkitBuilder:
         self.name = name
         self.type = type
 
-    def make(self, *, model: str, config: ToolkitConfig) -> "Toolkit": ...
+    async def make(
+        self, *, room: RoomClient, model: str, config: ToolkitConfig
+    ) -> "Toolkit": ...
 
 
 class Toolkit(ToolkitBuilder):
@@ -94,12 +97,16 @@ class Toolkit(ToolkitBuilder):
             span.set_attribute("response_type", response.to_json()["type"])
             return response
 
-    def make(self, *, model: str, config: ToolkitConfig):
+    async def make(self, *, room: RoomClient, model: str, config: ToolkitConfig):
         return self
 
 
-def make_toolkits(
-    *, model: str, providers: list[ToolkitBuilder], tools: list[ToolkitConfig]
+async def make_toolkits(
+    *,
+    room: RoomClient,
+    model: str,
+    providers: list[ToolkitBuilder],
+    tools: list[ToolkitConfig],
 ) -> list[Toolkit]:
     result = []
     if tools is not None:
@@ -109,14 +116,18 @@ def make_toolkits(
                 for t in providers:
                     if t.name == config["name"]:
                         config = t.type.model_validate(config)
-                        result.append(t.make(model=model, config=config))
+                        result.append(
+                            await t.make(room=room, model=model, config=config)
+                        )
                         found = True
                         break
 
             else:
                 for t in providers:
                     if t.type is type(config):
-                        result.append(t.make(model=model, config=config))
+                        result.append(
+                            await t.make(room=room, model=model, config=config)
+                        )
                         found = True
                         break
 
