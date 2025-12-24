@@ -2,7 +2,7 @@ from .config import ToolkitConfig
 from .tool import Tool
 from .toolkit import ToolContext, ToolkitBuilder
 from .hosting import RemoteToolkit, Toolkit
-from typing import Literal
+from typing import Literal, Optional
 from meshagent.api.room_server_client import DataType, RoomClient
 
 
@@ -27,8 +27,15 @@ class ListTablesTool(Tool):
 
 
 class InsertRowsTool(Tool):
-    def __init__(self, *, table: str, schema: dict[str, DataType]):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
         self.table = table
+        self.namespace = namespace
 
         input_schema = {
             "type": "object",
@@ -54,12 +61,21 @@ class InsertRowsTool(Tool):
         )
 
     async def execute(self, context: ToolContext, *, rows):
-        await context.room.database.insert(table=self.table, records=rows)
+        await context.room.database.insert(
+            table=self.table, records=rows, namespace=self.namespace
+        )
 
 
 class DeleteRowsTool(Tool):
-    def __init__(self, *, table: str, schema: dict[str, DataType]):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
         self.table = table
+        self.namespace = namespace
 
         input_schema = {
             "type": "object",
@@ -89,14 +105,23 @@ class DeleteRowsTool(Tool):
                 search[k] = v
 
         await context.room.database.delete(
-            table=self.table, where=search if len(search) > 0 else None
+            table=self.table,
+            where=search if len(search) > 0 else None,
+            namespace=self.namespace,
         )
         return {"ok": True}
 
 
 class UpdateTool(Tool):
-    def __init__(self, *, table: str, schema: dict[str, DataType]):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
         self.table = table
+        self.namespace = namespace
 
         columns = ""
 
@@ -138,14 +163,23 @@ class UpdateTool(Tool):
         )
 
     async def execute(self, context: ToolContext, *, where: str, values: dict):
-        await context.room.database.update(table=self.table, where=where, values=values)
+        await context.room.database.update(
+            table=self.table, where=where, values=values, namespace=self.namespace
+        )
 
         return {"ok": True}
 
 
 class SearchTool(Tool):
-    def __init__(self, *, table: str, schema: dict[str, DataType]):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
         self.table = table
+        self.namespace = namespace
 
         input_schema = {
             "type": "object",
@@ -176,14 +210,23 @@ class SearchTool(Tool):
 
         return {
             "rows": await context.room.database.search(
-                table=self.table, where=search if len(search) > 0 else None
+                table=self.table,
+                where=search if len(search) > 0 else None,
+                namespace=self.namespace,
             )
         }
 
 
 class AdvancedSearchTool(Tool):
-    def __init__(self, *, table: str, schema: dict[str, DataType]):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
         self.table = table
+        self.namespace = namespace
 
         columns = ""
 
@@ -211,14 +254,22 @@ class AdvancedSearchTool(Tool):
 
     async def execute(self, context: ToolContext, *, where: str):
         return {
-            "rows": await context.room.database.search(table=self.table, where=where)
+            "rows": await context.room.database.search(
+                table=self.table, where=where, namespace=self.namespace
+            )
         }
 
 
 class AdvancedDeleteRowsTool(Tool):
-    def __init__(self, *, table: str, schema: dict[str, DataType]):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
         self.table = table
-
+        self.namespace = namespace
         columns = ""
 
         for k, v in schema.items():
@@ -244,13 +295,19 @@ class AdvancedDeleteRowsTool(Tool):
         )
 
     async def execute(self, context: ToolContext, *, where: str):
-        await context.room.database.delete(table=self.table, where=where)
+        await context.room.database.delete(
+            table=self.table, where=where, namespace=self.namespace
+        )
         return {"ok": True}
 
 
 class DatabaseToolkit(RemoteToolkit):
     def __init__(
-        self, *, tables: dict[str, dict[str, DataType]], read_only: bool = False
+        self,
+        *,
+        tables: dict[str, dict[str, DataType]],
+        read_only: bool = False,
+        namespace: Optional[list[str]] = None,
     ):
         tools = [
             # ListTablesTool()
@@ -258,13 +315,25 @@ class DatabaseToolkit(RemoteToolkit):
 
         for table, schema in tables.items():
             if not read_only:
-                tools.append(InsertRowsTool(table=table, schema=schema))
-                tools.append(UpdateTool(table=table, schema=schema))
-                tools.append(DeleteRowsTool(table=table, schema=schema))
-                tools.append(AdvancedDeleteRowsTool(table=table, schema=schema))
+                tools.append(
+                    InsertRowsTool(table=table, schema=schema, namespace=namespace)
+                )
+                tools.append(
+                    UpdateTool(table=table, schema=schema, namespace=namespace)
+                )
+                tools.append(
+                    DeleteRowsTool(table=table, schema=schema, namespace=namespace)
+                )
+                tools.append(
+                    AdvancedDeleteRowsTool(
+                        table=table, schema=schema, namespace=namespace
+                    )
+                )
 
-            tools.append(SearchTool(table=table, schema=schema))
-            tools.append(AdvancedSearchTool(table=table, schema=schema))
+            tools.append(SearchTool(table=table, schema=schema, namespace=namespace))
+            tools.append(
+                AdvancedSearchTool(table=table, schema=schema, namespace=namespace)
+            )
 
         super().__init__(
             name="database",
@@ -277,6 +346,7 @@ class DatabaseToolkit(RemoteToolkit):
 class DatabaseToolkitConfig(ToolkitConfig):
     name: str = Literal["database"]
     tables: list[str]
+    namespace: Optional[list[str]] = None
     read_only: bool
 
 
@@ -289,5 +359,7 @@ class DatabaseToolkitBuilder(ToolkitBuilder):
     ) -> Toolkit:
         tables = {}
         for t in config.tables:
-            tables[t] = await room.database.inspect(table=t)
-        return DatabaseToolkit(tables=tables, read_only=config.read_only)
+            tables[t] = await room.database.inspect(table=t, namespace=config.namespace)
+        return DatabaseToolkit(
+            tables=tables, read_only=config.read_only, namespace=config.namespace
+        )
