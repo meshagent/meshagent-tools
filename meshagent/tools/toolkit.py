@@ -24,7 +24,7 @@ class ToolkitConfig(ToolkitConfig):
 
 def make_basic_toolkit_config_cls(toolkit: "Toolkit"):
     class CustomToolkitConfig:
-        name: Literal[toolkit.name]
+        name: Literal[toolkit.name] = toolkit.name
 
     return CustomToolkitConfig
 
