@@ -197,7 +197,7 @@ class StorageToolkit(RemoteToolkit):
 
 
 class StorageToolkitConfig(ToolkitConfig):
-    name: str = Literal["storage"]
+    name: Literal["storage"]
 
 
 class StorageToolkitBuilder(ToolkitBuilder):

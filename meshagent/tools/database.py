@@ -344,7 +344,7 @@ class DatabaseToolkit(RemoteToolkit):
 
 
 class DatabaseToolkitConfig(ToolkitConfig):
-    name: str = Literal["database"]
+    name: Literal["database"]
     tables: list[str]
     namespace: Optional[list[str]] = None
     read_only: bool
