@@ -86,8 +86,7 @@ class DeleteRowsTool(Tool):
 
         for k, v in schema.items():
             input_schema["required"].append(k)
-            schema["type"] = v.to_json_schema()
-            input_schema["properties"][k] = schema
+            input_schema["properties"][k] = v.to_json_schema()
 
         super().__init__(
             name=f"delete_{table}_rows",
@@ -189,9 +188,7 @@ class SearchTool(Tool):
 
         for k, v in schema.items():
             input_schema["required"].append(k)
-            schema = v.to_json_schema()
-            schema["type"] = schema["type"]
-            input_schema["properties"][k] = schema
+            input_schema["properties"][k] = v.to_json_schema()
 
         super().__init__(
             name=f"search_{table}",
