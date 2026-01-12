@@ -5,6 +5,10 @@ from .hosting import RemoteToolkit, Toolkit
 from typing import Literal, Optional
 from meshagent.api.room_server_client import DataType, RoomClient
 
+import logging
+
+logger = logging.getLogger("database_toolkit")
+
 
 class ListTablesTool(Tool):
     def __init__(self):
@@ -208,7 +212,6 @@ class SearchTool(Tool):
             },
         }
 
-        print(input_schema)
         super().__init__(
             name=f"search_{table}",
             title=f"search {table}",
@@ -240,6 +243,183 @@ class SearchTool(Tool):
                 limit=limit,
             )
         }
+
+
+class LLMßSearchTool(Tool):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
+        self.table = table
+        self.namespace = namespace
+
+        query = {
+            "type": "object",
+            "required": [],
+            "additionalProperties": False,
+            "properties": {},
+        }
+
+        for k, v in schema.items():
+            query["required"].append(k)
+            query["properties"][k] = v.to_json_schema()
+
+        input_schema = {
+            "type": "object",
+            "required": ["query", "limit", "offset", "select"],
+            "additionalProperties": False,
+            "properties": {
+                "query": query,
+                "select": {
+                    "type": "array",
+                    "description": f"the columns to return, available columns: {','.join(schema.keys())}",
+                    "items": {
+                        "type": "string",
+                    },
+                },
+                "limit": {"type": "integer"},
+                "offset": {"type": "integer"},
+            },
+        }
+
+        super().__init__(
+            name=f"search_{table}",
+            title=f"search {table}",
+            description=f"search {table} table for rows with the specified values (specify null for a column to exclude it from the search)",
+            input_schema=input_schema,
+        )
+
+    async def execute(
+        self,
+        context: ToolContext,
+        query: object,
+        limit: int,
+        offset: int,
+        select: list[str],
+    ):
+        search = {}
+
+        for k, v in query.items():
+            if v is not None:
+                search[k] = v
+
+        return {
+            "rows": await context.room.database.search(
+                select=select,
+                table=self.table,
+                where=search if len(search) > 0 else None,
+                namespace=self.namespace,
+                offset=offset,
+                limit=limit,
+            )
+        }
+
+
+class SpawnTaskForEachRow(Tool):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        prompt: str,
+        queue: str,
+        namespace: Optional[list[str]] = None,
+        name: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        supports_context: bool = True,
+    ):
+        self.table = table
+        self.namespace = namespace
+        self.queue = queue
+        self.prompt = prompt
+
+        query = {
+            "type": "object",
+            "required": [],
+            "additionalProperties": False,
+            "properties": {},
+        }
+
+        for k, v in schema.items():
+            query["required"].append(k)
+            query["properties"][k] = v.to_json_schema()
+
+        input_schema = {
+            "type": "object",
+            "required": ["query", "limit", "offset", "select"],
+            "additionalProperties": False,
+            "properties": {
+                "query": query,
+                "select": {
+                    "type": "array",
+                    "description": f"the columns to return, available columns: {','.join(schema.keys())}",
+                    "items": {
+                        "type": "string",
+                    },
+                },
+                "limit": {"type": "integer"},
+                "offset": {"type": "integer"},
+            },
+        }
+
+        print(input_schema)
+        super().__init__(
+            name=name or f"spawn_task_for_each_{table}_row",
+            title=title or f"Spawn task for each {table} row",
+            description=description
+            or f"for each result in {table} where rows match the specified values (specify null for a column to exclude it from the search), queue a worker task",
+            input_schema=input_schema,
+            supports_context=supports_context,
+        )
+
+    def make_message(self, *, context: ToolContext, row: dict):
+        msg = {
+            "prompt": self.prompt.format(**row),
+            "row": row,
+        }
+
+        if self.supports_context:
+            msg["caller_context"] = context.caller_context
+
+        return msg
+
+    async def execute(
+        self,
+        context: ToolContext,
+        query: object,
+        limit: int,
+        offset: int,
+        select: list[str],
+    ):
+        search = {}
+
+        for k, v in query.items():
+            if v is not None:
+                search[k] = v
+
+        rows = await context.room.database.search(
+            select=select,
+            table=self.table,
+            where=search if len(search) > 0 else None,
+            namespace=self.namespace,
+            offset=offset,
+            limit=limit,
+        )
+
+        logger.info(
+            f"spawn_task_for_each_{self.table}_row matched {len(rows)}. adding items to the queue {self.queue}"
+        )
+
+        for row in rows:
+            await context.room.queues.send(
+                name=self.queue, message=self.make_message(context=context, row=row)
+            )
+
+        return {f"added {len(row)} items to the queue {self.queue}"}
 
 
 class CountTool(Tool):
