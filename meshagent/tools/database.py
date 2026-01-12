@@ -91,7 +91,7 @@ class DeleteRowsTool(Tool):
         super().__init__(
             name=f"delete_{table}_rows",
             title=f"delete {table} rows",
-            description=f"search {table} table for rows with the specified values (specify null for a column to exclude it from the search) and then delete them",
+            description=f"delete from {table} where rows match the specified values (specify null for a column to exclude it from the search)",
             input_schema=input_schema,
         )
 
@@ -179,7 +179,7 @@ class SearchTool(Tool):
         self.table = table
         self.namespace = namespace
 
-        input_schema = {
+        query = {
             "type": "object",
             "required": [],
             "additionalProperties": False,
@@ -187,9 +187,28 @@ class SearchTool(Tool):
         }
 
         for k, v in schema.items():
-            input_schema["required"].append(k)
-            input_schema["properties"][k] = v.to_json_schema()
+            query["required"].append(k)
+            query["properties"][k] = v.to_json_schema()
 
+        input_schema = {
+            "type": "object",
+            "required": ["query", "limit", "offset", "select"],
+            "additionalProperties": False,
+            "properties": {
+                "query": query,
+                "select": {
+                    "type": "array",
+                    "description": f"the columns to return, available columns: {','.join(schema.keys())}",
+                    "items": {
+                        "type": "string",
+                    },
+                },
+                "limit": {"type": "integer"},
+                "offset": {"type": "integer"},
+            },
+        }
+
+        print(input_schema)
         super().__init__(
             name=f"search_{table}",
             title=f"search {table}",
@@ -197,15 +216,79 @@ class SearchTool(Tool):
             input_schema=input_schema,
         )
 
-    async def execute(self, context: ToolContext, **values):
+    async def execute(
+        self,
+        context: ToolContext,
+        query: object,
+        limit: int,
+        offset: int,
+        select: list[str],
+    ):
         search = {}
 
-        for k, v in values.items():
+        for k, v in query.items():
             if v is not None:
                 search[k] = v
 
         return {
             "rows": await context.room.database.search(
+                select=select,
+                table=self.table,
+                where=search if len(search) > 0 else None,
+                namespace=self.namespace,
+                offset=offset,
+                limit=limit,
+            )
+        }
+
+
+class CountTool(Tool):
+    def __init__(
+        self,
+        *,
+        table: str,
+        schema: dict[str, DataType],
+        namespace: Optional[list[str]] = None,
+    ):
+        self.table = table
+        self.namespace = namespace
+
+        query = {
+            "type": "object",
+            "required": [],
+            "additionalProperties": False,
+            "properties": {},
+        }
+
+        input_schema = {
+            "type": "object",
+            "required": ["query"],
+            "additionalProperties": False,
+            "properties": {
+                "query": query,
+            },
+        }
+
+        for k, v in schema.items():
+            query["required"].append(k)
+            query["properties"][k] = v.to_json_schema()
+
+        super().__init__(
+            name=f"count_{table}",
+            title=f"count_{table}",
+            description=f"count matching rows in the {table} table",
+            input_schema=input_schema,
+        )
+
+    async def execute(self, context: ToolContext, query: object):
+        search = {}
+
+        for k, v in query.items():
+            if v is not None:
+                search[k] = v
+
+        return {
+            "rows": await context.room.database.count(
                 table=self.table,
                 where=search if len(search) > 0 else None,
                 namespace=self.namespace,
@@ -326,6 +409,7 @@ class DatabaseToolkit(RemoteToolkit):
                     )
                 )
 
+            tools.append(CountTool(table=table, schema=schema, namespace=namespace))
             tools.append(SearchTool(table=table, schema=schema, namespace=namespace))
             tools.append(
                 AdvancedSearchTool(table=table, schema=schema, namespace=namespace)
