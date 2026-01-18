@@ -130,16 +130,21 @@ class UpdateTool(Tool):
         for k, v in schema.items():
             columns += f"column {k} => {v.to_json()}"
 
-        values_schema = {
-            "type": "object",
-            "required": [],
-            "additionalProperties": False,
-            "properties": {},
-        }
+        anyOf = []
+
+
 
         for k, v in schema.items():
-            values_schema["required"].append(k)
-            values_schema["properties"][k] = v.to_json_schema()
+            anyOf.append(
+                {
+                    "type" : "object",
+                    "additionalProperties" : False,
+                    "required" : [ k ],
+                    "properties" : {
+                        k: v.to_json_schema()
+                    }
+                }
+            )
 
         input_schema = {
             "type": "object",
@@ -153,7 +158,13 @@ class UpdateTool(Tool):
                     "type": "string",
                     "description": f"a lance db compatible filter, columns are: {columns}",
                 },
-                "values": values_schema,
+                "values": {
+                    "type" : "array",
+                    "description" : "a list of columns to update",
+                    "items" : {
+                        "anyOf" : anyOf
+                    }
+                },
             },
         }
 
@@ -164,9 +175,15 @@ class UpdateTool(Tool):
             input_schema=input_schema,
         )
 
-    async def execute(self, context: ToolContext, *, where: str, values: dict):
+    async def execute(self, context: ToolContext, *, where: str, values: list[dict]):
+
+        set = {}
+        for value in values:
+            for k, v in value.items():
+                set[k] = v
+
         await context.room.database.update(
-            table=self.table, where=where, values=values, namespace=self.namespace
+            table=self.table, where=where, values=set, namespace=self.namespace
         )
 
         return {"ok": True}
@@ -245,7 +262,7 @@ class SearchTool(Tool):
         }
 
 
-class LLMßSearchTool(Tool):
+class LLMSearchTool(Tool):
     def __init__(
         self,
         *,
@@ -490,7 +507,7 @@ class AdvancedSearchTool(Tool):
         columns = ""
 
         for k, v in schema.items():
-            columns += f"column {k} => {v.to_json()}"
+            columns += f"column {k} => {v.to_json()}\n"
 
         input_schema = {
             "type": "object",
@@ -580,9 +597,9 @@ class DatabaseToolkit(RemoteToolkit):
                 tools.append(
                     UpdateTool(table=table, schema=schema, namespace=namespace)
                 )
-                tools.append(
-                    DeleteRowsTool(table=table, schema=schema, namespace=namespace)
-                )
+                #tools.append(
+                #    DeleteRowsTool(table=table, schema=schema, namespace=namespace)
+                #)
                 tools.append(
                     AdvancedDeleteRowsTool(
                         table=table, schema=schema, namespace=namespace
@@ -590,7 +607,7 @@ class DatabaseToolkit(RemoteToolkit):
                 )
 
             tools.append(CountTool(table=table, schema=schema, namespace=namespace))
-            tools.append(SearchTool(table=table, schema=schema, namespace=namespace))
+            #tools.append(SearchTool(table=table, schema=schema, namespace=namespace))
             tools.append(
                 AdvancedSearchTool(table=table, schema=schema, namespace=namespace)
             )
