@@ -132,17 +132,13 @@ class UpdateTool(Tool):
 
         anyOf = []
 
-
-
         for k, v in schema.items():
             anyOf.append(
                 {
-                    "type" : "object",
-                    "additionalProperties" : False,
-                    "required" : [ k ],
-                    "properties" : {
-                        k: v.to_json_schema()
-                    }
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [k],
+                    "properties": {k: v.to_json_schema()},
                 }
             )
 
@@ -159,11 +155,9 @@ class UpdateTool(Tool):
                     "description": f"a lance db compatible filter, columns are: {columns}",
                 },
                 "values": {
-                    "type" : "array",
-                    "description" : "a list of columns to update",
-                    "items" : {
-                        "anyOf" : anyOf
-                    }
+                    "type": "array",
+                    "description": "a list of columns to update",
+                    "items": {"anyOf": anyOf},
                 },
             },
         }
@@ -176,7 +170,6 @@ class UpdateTool(Tool):
         )
 
     async def execute(self, context: ToolContext, *, where: str, values: list[dict]):
-
         set = {}
         for value in values:
             for k, v in value.items():
@@ -597,9 +590,9 @@ class DatabaseToolkit(RemoteToolkit):
                 tools.append(
                     UpdateTool(table=table, schema=schema, namespace=namespace)
                 )
-                #tools.append(
+                # tools.append(
                 #    DeleteRowsTool(table=table, schema=schema, namespace=namespace)
-                #)
+                # )
                 tools.append(
                     AdvancedDeleteRowsTool(
                         table=table, schema=schema, namespace=namespace
@@ -607,7 +600,7 @@ class DatabaseToolkit(RemoteToolkit):
                 )
 
             tools.append(CountTool(table=table, schema=schema, namespace=namespace))
-            #tools.append(SearchTool(table=table, schema=schema, namespace=namespace))
+            # tools.append(SearchTool(table=table, schema=schema, namespace=namespace))
             tools.append(
                 AdvancedSearchTool(table=table, schema=schema, namespace=namespace)
             )
