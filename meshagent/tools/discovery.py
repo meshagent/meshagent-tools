@@ -30,33 +30,13 @@ class ListTools(Tool):
         return {"toolkits": [*(t.to_json() for t in toolkits)]}
 
 
-class ListAgents(Tool):
-    def __init__(self):
-        super().__init__(
-            name="list_agents",
-            title="list agents",
-            description="lists the callable agents in the room",
-            input_schema={
-                "type": "object",
-                "additionalProperties": False,
-                "required": [],
-                "properties": {},
-            },
-        )
-
-    async def execute(self, context: ToolContext):
-        agents = await context.room.agents.list_agents()
-        return {"agents": [*(t.to_json() for t in agents)]}
-
-
 class DiscoveryToolkit(RemoteToolkit):
     def __init__(self):
         super().__init__(
-            name="storage",
-            title="storage",
-            description="tools for interacting with meshagent room storage",
+            name="discovery",
+            title="discovery",
+            description="toolkit for discovering tools in a room",
             tools=[
                 ListTools(),
-                ListAgents(),
             ],
         )
