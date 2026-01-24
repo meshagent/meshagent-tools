@@ -636,6 +636,8 @@ class StorageToolkit(RemoteToolkit):
         mounts: Optional[list[StorageToolMount]] = None,
     ):
         prepared_mounts = _prepare_mounts(mounts)
+        self._mounts = prepared_mounts
+        self._read_only = read_only
         has_writable_mount = any(
             not prepared.mount.read_only for prepared in prepared_mounts
         )
@@ -657,6 +659,73 @@ class StorageToolkit(RemoteToolkit):
             title="storage",
             description="tools for interacting with meshagent room storage",
             tools=tools,
+        )
+
+    def _ensure_writable(self, path: str) -> None:
+        if self._read_only:
+            raise RoomException(f"storage toolkit is read-only: {path}")
+
+    def _resolve_path(self, path: str) -> _ResolvedStoragePath:
+        return _resolve_storage_path(self._mounts, path)
+
+    async def read_file(self, *, context: ToolContext, path: str) -> FileResponse:
+        resolved = self._resolve_path(path)
+        return await resolved.mount.read_file(
+            context=context,
+            resolved=resolved,
+            path=path,
+        )
+
+    async def list_entries(
+        self, *, context: ToolContext, path: str
+    ) -> list[StorageEntry]:
+        resolved = self._resolve_path(path)
+        return await resolved.mount.list_entries(context=context, resolved=resolved)
+
+    async def get_download_url(
+        self, *, context: ToolContext, path: str
+    ) -> LinkResponse:
+        resolved = self._resolve_path(path)
+        return await resolved.mount.get_download_url(
+            context=context,
+            resolved=resolved,
+            path=path,
+        )
+
+    async def write_text(
+        self,
+        *,
+        context: ToolContext,
+        path: str,
+        text: str,
+        overwrite: bool,
+    ) -> None:
+        self._ensure_writable(path)
+        resolved = self._resolve_path(path)
+        await resolved.mount.write_text(
+            context=context,
+            resolved=resolved,
+            path=path,
+            text=text,
+            overwrite=overwrite,
+        )
+
+    async def write_bytes(
+        self,
+        *,
+        context: ToolContext,
+        path: str,
+        data: bytes,
+        overwrite: bool,
+    ) -> None:
+        self._ensure_writable(path)
+        resolved = self._resolve_path(path)
+        await resolved.mount.write_bytes(
+            context=context,
+            resolved=resolved,
+            path=path,
+            data=data,
+            overwrite=overwrite,
         )
 
 
