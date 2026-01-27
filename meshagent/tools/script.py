@@ -311,3 +311,39 @@ class ScriptTool(Tool):
                 )
 
         return {"results": results}
+
+
+async def get_script_tools(room: RoomClient):
+    services = await room.services.list()
+
+    st = []
+
+    for service in services:
+        if service.metadata.annotations is not None:
+            print("X")
+            type = service.metadata.annotations.get("meshagent.tool.type")
+            print(type)
+            commands_str = service.metadata.annotations.get("meshagent.tool.commands")
+            print(commands_str)
+            tool_name = service.metadata.annotations.get(
+                "meshagent.tool.name", service.metadata.name
+            )
+            description = service.metadata.annotations.get(
+                "meshagent.tool.description", service.metadata.description
+            )
+
+            if type == "script" and tool_name is not None:
+                print("FOUND")
+                if commands_str is not None:
+                    commands = commands_str.split("\n")
+
+                    st.append(
+                        ScriptTool(
+                            name=tool_name,
+                            description=description,
+                            service_id=service.id,
+                            commands=commands,
+                        )
+                    )
+
+    return st
