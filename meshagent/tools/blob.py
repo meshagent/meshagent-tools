@@ -1,6 +1,6 @@
 from uuid import uuid4
 import base64
-import aiohttp
+from meshagent.api.http import new_client_session
 
 
 class Blob:
@@ -48,7 +48,7 @@ async def get_bytes_from_url(*, url: str) -> Blob:
         # file_name = str(uuid.uuid4())+extension
         return Blob(mime_type=mime_type, data=content)
     else:
-        async with aiohttp.ClientSession() as session:
+        async with new_client_session() as session:
             async with session.get(url=url) as response:
                 content = await response.content.read()
                 return Blob(mime_type=response.content_type, data=content)
