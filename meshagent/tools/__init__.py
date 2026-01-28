@@ -16,6 +16,7 @@ from .tool import (
     ToolContext,
     Tool,
     BaseTool,
+    tool,
 )
 
 from .config import ToolkitConfig
@@ -52,6 +53,7 @@ __all__ = [
     ToolContext,
     Toolkit,
     Response,
+    tool,
     LinkResponse,
     BaseTool,
     RemoteToolkit,
