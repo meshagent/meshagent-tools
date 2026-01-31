@@ -128,7 +128,7 @@ class UpdateTool(Tool):
         columns = ""
 
         for k, v in schema.items():
-            columns += f"column {k} => {v.to_json()}"
+            columns += f"column {k} => {v.model_dump(mode='json')}"
 
         anyOf = []
 
@@ -500,7 +500,7 @@ class AdvancedSearchTool(Tool):
         columns = ""
 
         for k, v in schema.items():
-            columns += f"column {k} => {v.to_json()}\n"
+            columns += f"column {k} => {v.model_dump(mode='json')}\n"
 
         input_schema = {
             "type": "object",
@@ -542,7 +542,7 @@ class AdvancedDeleteRowsTool(Tool):
         columns = ""
 
         for k, v in schema.items():
-            columns += f"column {k} => {v.to_json()}"
+            columns += f"column {k} => {v.model_dump(mode='json')}"
 
         input_schema = {
             "type": "object",

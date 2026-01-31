@@ -8,7 +8,7 @@ import json
 
 from typing import Optional, Literal
 from meshagent.tools.config import ToolkitConfig
-from meshagent.tools.tool import ToolContext, BaseTool
+from meshagent.tools.tool import ToolContext, BaseTool, Tool
 
 from opentelemetry import trace
 
@@ -91,7 +91,12 @@ class Toolkit(ToolkitBuilder):
                 schema["$defs"] = {**tool.defs}
 
             validate(arguments, schema)
-            response = await tool.execute(context=context, **arguments)
+            if isinstance(tool, Tool):
+                response = await tool.invoke(
+                    context=context, arguments=arguments, attachment=attachment
+                )
+            else:
+                raise RoomException("tools must extend the Tool class to be invokable")
             response = ensure_response(response)
 
             span.set_attribute("response_type", response.to_json()["type"])
