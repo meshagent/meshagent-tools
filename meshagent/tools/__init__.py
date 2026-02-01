@@ -31,6 +31,12 @@ from .hosting import (
 )
 from .multi_tool import MultiTool, MultiToolkit
 from .version import __version__
+from .web_toolkit import (
+    WebFetchConfig,
+    WebFetchTool,
+    WebFetchToolkitBuilder,
+    WebToolkit,
+)
 
 from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
 from meshagent.api.websocket_protocol import WebSocketClientProtocol
@@ -66,5 +72,9 @@ __all__ = [
     make_toolkits,
     ToolkitConfig,
     get_bytes_from_url,
+    WebFetchConfig,
+    WebFetchTool,
+    WebFetchToolkitBuilder,
+    WebToolkit,
     __version__,
 ]
