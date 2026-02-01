@@ -147,7 +147,16 @@ def tool(
         supports_context = False
         fields: dict[str, tuple[Any, Any]] = {}
 
-        for param_name, param in signature.parameters.items():
+        parameters = list(signature.parameters.items())
+        bound_param_name = None
+        if parameters:
+            first_param_name, _first_param = parameters[0]
+            if first_param_name in ("self", "cls"):
+                bound_param_name = first_param_name
+
+        for param_name, param in parameters:
+            if bound_param_name == param_name:
+                continue
             annotation = hints.get(param_name, Any)
             if annotation is ToolContext:
                 supports_context = True
@@ -167,7 +176,7 @@ def tool(
         )
 
         class FunctionTool(Tool):
-            def __init__(self):
+            def __init__(self, bound_instance: Optional[object] = None):
                 super().__init__(
                     name=tool_name,
                     title=tool_title,
@@ -178,6 +187,20 @@ def tool(
                     supports_context=supports_context,
                 )
                 self.strict = True
+                self._bound_instance = bound_instance
+
+            def __get__(self, instance, owner):
+                if instance is None:
+                    if bound_param_name == "cls" and owner is not None:
+                        if self._bound_instance is owner:
+                            return self
+                        return FunctionTool(bound_instance=owner)
+                    return self
+
+                if self._bound_instance is instance:
+                    return self
+
+                return FunctionTool(bound_instance=instance)
 
             async def invoke(
                 self,
@@ -188,10 +211,18 @@ def tool(
                 data = InputModel.model_validate(arguments)
                 parsed_args = {field: getattr(data, field) for field in fields}
 
+                bound_instance = self._bound_instance
+
                 if supports_context:
-                    result = fn(context, **parsed_args)
+                    if bound_instance is not None:
+                        result = fn(bound_instance, context, **parsed_args)
+                    else:
+                        result = fn(context, **parsed_args)
                 else:
-                    result = fn(**parsed_args)
+                    if bound_instance is not None:
+                        result = fn(bound_instance, **parsed_args)
+                    else:
+                        result = fn(**parsed_args)
 
                 if inspect.isawaitable(result):
                     result = await result

@@ -36,6 +36,31 @@ async def test_decorated_tool_executes_with_toolkit():
     assert result.json == {"name": "alpha", "count": 2, "flag": True}
 
 
+class Greeter:
+    def __init__(self, prefix: str) -> None:
+        self._prefix = prefix
+
+    @tool(name="greet")
+    def greet(self, *, name: str) -> str:
+        return f"{self._prefix}{name}"
+
+
+@pytest.mark.asyncio
+async def test_decorated_method_executes_with_toolkit():
+    greeter = Greeter("hello ")
+    toolkit = Toolkit(name="test", tools=[greeter.greet])
+    context = ToolContext(room=object(), caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="greet",
+        arguments={"name": "mesh"},
+    )
+
+    assert isinstance(result, JsonResponse)
+    assert result.json == "hello mesh"
+
+
 def test_decorator_schema_is_strict():
     schema = make_payload.input_schema
 
