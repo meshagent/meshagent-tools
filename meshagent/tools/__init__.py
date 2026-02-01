@@ -43,11 +43,7 @@ from .container_shell import (
     ContainerShellTool,
 )
 
-from .script import (
-    ScriptTool,
-    ScriptToolConfig,
-    ScriptToolkitBuilder
-)
+from .script import ScriptTool, ScriptToolConfig, ScriptToolkitBuilder
 
 from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
 from meshagent.api.websocket_protocol import WebSocketClientProtocol

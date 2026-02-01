@@ -76,7 +76,8 @@ class ContainerShellTool(Tool):
 
         super().__init__(
             name=name,
-            description=description or "execute shell commands in a container and return the result",
+            description=description
+            or "execute shell commands in a container and return the result",
             title=title,
             input_schema={
                 "type": "object",
