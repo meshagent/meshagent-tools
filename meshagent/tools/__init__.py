@@ -37,6 +37,17 @@ from .web_toolkit import (
     WebFetchToolkitBuilder,
     WebToolkit,
 )
+from .container_shell import (
+    ContainerShellToolConfig,
+    ContainerShellToolkitBuilder,
+    ContainerShellTool,
+)
+
+from .script import (
+    ScriptTool,
+    ScriptToolConfig,
+    ScriptToolkitBuilder
+)
 
 from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
 from meshagent.api.websocket_protocol import WebSocketClientProtocol
@@ -76,5 +87,11 @@ __all__ = [
     WebFetchTool,
     WebFetchToolkitBuilder,
     WebToolkit,
+    ContainerShellToolConfig,
+    ContainerShellToolkitBuilder,
+    ContainerShellTool,
+    ScriptTool,
+    ScriptToolConfig,
+    ScriptToolkitBuilder,
     __version__,
 ]

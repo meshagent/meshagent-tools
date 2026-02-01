@@ -1,9 +1,7 @@
 from meshagent.api import RoomClient
-from meshagent.tools import Toolkit, ToolContext, Tool
+from meshagent.tools.tool import Tool, ToolContext
+from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
 
-from meshagent.agents.adapter import (
-    ToolkitBuilder,
-)
 
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
 from typing import Literal
