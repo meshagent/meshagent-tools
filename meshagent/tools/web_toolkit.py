@@ -12,6 +12,7 @@ from meshagent.tools.tool import Tool, ToolContext
 from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
 from meshagent.api.room_server_client import RoomClient
 
+
 class WebToolkit(Toolkit):
     def __init__(self):
         super().__init__(name="web_fetch", tools=[WebFetchTool()])
@@ -63,6 +64,7 @@ class WebFetchTool(Tool):
                     text = _decode_text(data=data, charset=resp.charset)
                     if content_type == "text/html":
                         from html_to_markdown import convert
+
                         text = convert(text)
                     return TextResponse(text=text)
 
