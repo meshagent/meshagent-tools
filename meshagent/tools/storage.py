@@ -149,10 +149,14 @@ class StorageToolRoomMount(StorageToolMount):
         filename = os.path.basename(path)
         _, extension = os.path.splitext(path)
         if extension:
+            ext = extension.lstrip(".")
             schema_path = _make_room_path(
-                resolved.room_root, f".schemas/{extension.lstrip('.')}" + ".json"
+                resolved.room_root, f".schemas/{ext}" + ".json"
             )
-            if await context.room.storage.exists(path=schema_path):
+
+            if ext in ["transcript", "thread"] or await context.room.storage.exists(
+                path=schema_path
+            ):
                 return FileResponse(
                     mime_type="application/json",
                     name=filename,
