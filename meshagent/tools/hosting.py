@@ -133,13 +133,27 @@ class RemoteToolkit(Toolkit):
             f"agent.tool_call.{self.name}", self._tool_call
         )
 
+    def _mangle(self, name: str):
+        if self.public:
+            return name
+        else:
+            n = self.room.local_participant.get_attribute("name")
+            return f"{n}_{name}"
+
+    def _unmangle(self, name: str):
+        if self.public:
+            return name
+        else:
+            n = self.room.local_participant.get_attribute("name")
+            return name.removeprefix(f"{n}_")
+
     async def _tool_call(
         self, protocol: Protocol, message_id: int, msg_type: str, data: bytes
     ):
         async def do_call():
             # Decode and parse the message
             message, attachment = unpack_message(data)
-            name = message["name"]
+            name = self._unmangle(message["name"])
             args = message["arguments"]
             caller_id = message["caller_id"]
             caller_context = message.get("caller_context", None)
@@ -216,7 +230,7 @@ class RemoteToolkit(Toolkit):
             if tool.name in children:
                 raise RoomException(f"duplicate tool name {tool.name}")
 
-            children[tool.name] = {
+            children[self._mangle(tool.name)] = {
                 "title": tool.title,
                 "description": tool.description,
                 "input_schema": tool.input_schema,
