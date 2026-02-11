@@ -4,7 +4,7 @@ import json
 import mimetypes
 import os
 from urllib.parse import urlparse
-
+from typing import Optional
 from meshagent.api.http import new_client_session
 from meshagent.api.messaging import FileResponse, JsonResponse, Response, TextResponse
 from meshagent.tools.config import ToolkitConfig
@@ -14,12 +14,12 @@ from meshagent.api.room_server_client import RoomClient
 
 
 class WebToolkit(Toolkit):
-    def __init__(self):
-        super().__init__(name="web_fetch", tools=[WebFetchTool()])
+    def __init__(self, *, user_agent: Optional[str] = None):
+        super().__init__(name="web_fetch", tools=[WebFetchTool(user_agent=user_agent)])
 
 
 class WebFetchTool(Tool):
-    def __init__(self):
+    def __init__(self, *, user_agent: Optional[str] = None):
         super().__init__(
             name="web_fetch",
             title="web fetch",
@@ -36,13 +36,19 @@ class WebFetchTool(Tool):
                 "additionalProperties": False,
             },
         )
+        self.user_agent = user_agent
 
     async def execute(self, context: ToolContext, **kwargs: object) -> Response:
         url = str(kwargs.get("url", ""))
         if not url:
             raise ValueError("url is required")
         async with new_client_session() as session:
-            async with session.get(url) as resp:
+            async with session.get(
+                url,
+                headers={
+                    "User-Agent": self.user_agent or "Meshagent",
+                },
+            ) as resp:
                 if resp.status >= 400:
                     raise Exception(f"web fetch failed with status {resp.status}")
 
@@ -123,6 +129,7 @@ def _infer_filename(*, url: str, content_type: str) -> str:
 
 class WebFetchConfig(ToolkitConfig):
     name: str = "web_fetch"
+    user_agent: str = "Meshagent"
 
 
 class WebFetchToolkitBuilder(ToolkitBuilder):
@@ -132,4 +139,4 @@ class WebFetchToolkitBuilder(ToolkitBuilder):
     async def make(
         self, *, room: RoomClient, model: str, config: WebFetchConfig
     ) -> Toolkit:
-        return WebToolkit()
+        return WebToolkit(user_agent=config.user_agent)
