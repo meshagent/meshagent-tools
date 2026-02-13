@@ -173,15 +173,13 @@ class ScriptTool(Tool):
             logger.info(
                 f"executing shell script in container {container_id} with timeout {timeout}: {commands}"
             )
-            import shlex
-
             for line in commands:
                 try:
                     # TODO: what if container start fails
 
                     exec = await context.room.containers.exec(
                         container_id=container_id,
-                        command=shlex.join(["bash", "-c", line]),
+                        command=["bash", "-c", line],
                         tty=False,
                     )
 

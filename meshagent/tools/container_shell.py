@@ -157,7 +157,7 @@ class ContainerShellTool(Tool):
                     )
                 exec = await context.room.containers.exec(
                     container_id=container_id,
-                    command=shlex.join(["bash", "-lc", command_to_run]),
+                    command=["bash", "-lc", command_to_run],
                     tty=False,
                 )
 
