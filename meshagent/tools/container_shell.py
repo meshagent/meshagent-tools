@@ -27,14 +27,14 @@ class ContainerShellToolkitBuilder(ToolkitBuilder):
         self,
         *,
         name: str = "container_shell",
-        working_directory: Optional[str] = None,
+        working_dir: Optional[str] = None,
         image: Optional[str] = "python:3.13",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
     ):
         super().__init__(name=name, type=ContainerShellToolConfig)
 
-        self.working_directory = working_directory
+        self.working_dir = working_dir
         self.image = image
         self.mounts = mounts
         self.env = env
@@ -47,7 +47,7 @@ class ContainerShellToolkitBuilder(ToolkitBuilder):
             tools=[
                 ContainerShellTool(
                     name=self.name,
-                    working_directory=self.working_directory,
+                    working_dir=self.working_dir,
                     image=self.image,
                     mounts=self.mounts,
                     env=self.env,
@@ -63,12 +63,12 @@ class ContainerShellTool(Tool):
         name: str = "container_shell",
         description: Optional[str] = None,
         title: Optional[str] = None,
-        working_directory: Optional[str] = None,
+        working_dir: Optional[str] = None,
         image: Optional[str] = "python:3.13",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
     ):
-        self.working_directory = working_directory
+        self.working_dir = working_dir
         self.image = image
         self.mounts = mounts
         self._container_id = None
@@ -151,9 +151,9 @@ class ContainerShellTool(Tool):
 
             for command in commands:
                 command_to_run = command
-                if self.working_directory:
+                if self.working_dir:
                     command_to_run = (
-                        f"cd {shlex.quote(self.working_directory)} && {command}"
+                        f"cd {shlex.quote(self.working_dir)} && {command}"
                     )
                 exec = await context.room.containers.exec(
                     container_id=container_id,

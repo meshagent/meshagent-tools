@@ -35,14 +35,14 @@ class ScriptToolkitBuilder(ToolkitBuilder):
         *,
         name: str = "script",
         commands: Optional[list[str]] = None,
-        working_directory: Optional[str] = None,
+        working_dir: Optional[str] = None,
         image: Optional[str] = "python:3.13",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         input_schema: Optional[dict] = None,
     ):
         super().__init__(name=name, type=ScriptToolConfig)
 
-        self.working_directory = working_directory
+        self.working_dir = working_dir
         self.image = image
         self.mounts = mounts
         self.commands = commands
@@ -57,7 +57,7 @@ class ScriptToolkitBuilder(ToolkitBuilder):
                     description=config.description,
                     title=config.title,
                     service_id=config.service_id,
-                    working_directory=self.working_directory,
+                    working_dir=self.working_dir,
                     image=self.image,
                     commands=self.commands or config.commands,
                     mounts=self.mounts,
@@ -76,7 +76,7 @@ class ScriptTool(Tool):
         description: Optional[str] = None,
         title: Optional[str] = None,
         service_id: Optional[str] = None,
-        working_directory: Optional[str] = None,
+        working_dir: Optional[str] = None,
         image: Optional[str] = "python:3.13",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
@@ -85,7 +85,7 @@ class ScriptTool(Tool):
         timeout_ms: int = 30 * 60 * 1000,
     ):
         self.service_id = service_id
-        self.working_directory = working_directory
+        self.working_dir = working_dir
         self.image = image
         self.mounts = mounts
         self._container_id = None
@@ -257,7 +257,7 @@ class ScriptTool(Tool):
 
                     proc = await asyncio.create_subprocess_shell(
                         shlex.join(["bash", "-c", line]),
-                        cwd=self.working_directory or os.getcwd(),
+                        cwd=self.working_dir or os.getcwd(),
                         env=merged_env,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
