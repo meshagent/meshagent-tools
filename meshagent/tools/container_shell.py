@@ -152,9 +152,7 @@ class ContainerShellTool(Tool):
             for command in commands:
                 command_to_run = command
                 if self.working_dir:
-                    command_to_run = (
-                        f"cd {shlex.quote(self.working_dir)} && {command}"
-                    )
+                    command_to_run = f"cd {shlex.quote(self.working_dir)} && {command}"
                 exec = await context.room.containers.exec(
                     container_id=container_id,
                     command=["bash", "-lc", command_to_run],
