@@ -15,7 +15,7 @@ dependencies = [
   "meshagent-api~=0.27.2",
   "html-to-markdown~=2.24.3",
   "aiohttp[speedups]~=3.13.0",
-  "opentelemetry-distro~=0.54b1"
+  "opentelemetry-distro~=0.59b0"
 ]
 dynamic = ["version", "readme"]
 
