@@ -17,6 +17,53 @@ tracer = trace.get_tracer("meshagent.tools")
 logger = logging.getLogger("tools")
 
 
+def _schema_allows_null(schema: object) -> bool:
+    if not isinstance(schema, dict):
+        return False
+
+    type_value = schema.get("type")
+    if isinstance(type_value, list):
+        return "null" in type_value
+    if type_value == "null":
+        return True
+
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list):
+        for variant in any_of:
+            if _schema_allows_null(variant):
+                return True
+
+    one_of = schema.get("oneOf")
+    if isinstance(one_of, list):
+        for variant in one_of:
+            if _schema_allows_null(variant):
+                return True
+
+    return False
+
+
+def _coerce_missing_nullable_required_arguments(
+    *, schema: dict, arguments: dict
+) -> dict:
+    required = schema.get("required")
+    properties = schema.get("properties")
+    if not isinstance(required, list) or not isinstance(properties, dict):
+        return arguments
+
+    normalized = dict(arguments)
+    for key in required:
+        if not isinstance(key, str):
+            continue
+        if key in normalized:
+            continue
+
+        property_schema = properties.get(key)
+        if _schema_allows_null(property_schema):
+            normalized[key] = None
+
+    return normalized
+
+
 class ToolkitConfig(ToolkitConfig):
     toolkit: str
     tool: str
@@ -90,10 +137,16 @@ class Toolkit(ToolkitBuilder):
             if tool.defs is not None:
                 schema["$defs"] = {**tool.defs}
 
-            validate(arguments, schema)
+            normalized_arguments = _coerce_missing_nullable_required_arguments(
+                schema=schema, arguments=arguments
+            )
+
+            validate(normalized_arguments, schema)
             if isinstance(tool, Tool):
                 response = await tool.invoke(
-                    context=context, arguments=arguments, attachment=attachment
+                    context=context,
+                    arguments=normalized_arguments,
+                    attachment=attachment,
                 )
             else:
                 raise RoomException("tools must extend the Tool class to be invokable")
