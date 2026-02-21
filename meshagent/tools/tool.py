@@ -4,6 +4,7 @@ import logging
 from abc import ABC
 
 from typing import Optional, Dict, Any, Callable, get_type_hints
+from collections.abc import AsyncIterable
 
 import inspect
 
@@ -50,8 +51,12 @@ class ToolContext:
         return self._room
 
     @property
-    def caller_context(self) -> Dict[str, Any]:
+    def caller_context(self) -> Optional[Dict[str, Any]]:
         return self._caller_context
+
+    @property
+    def event_handler(self) -> Optional[Callable[[dict], None]]:
+        return self._event_handler
 
     def emit(self, event: dict):
         if self._event_handler is not None:
@@ -226,6 +231,9 @@ def tool(
 
                 if inspect.isawaitable(result):
                     result = await result
+
+                if isinstance(result, AsyncIterable):
+                    return result
 
                 if isinstance(result, BaseModel):
                     result = result.model_dump(mode="json")

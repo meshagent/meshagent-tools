@@ -11,6 +11,7 @@ from meshagent.tools.config import ToolkitConfig
 from meshagent.tools.tool import ToolContext, BaseTool, Tool
 
 from opentelemetry import trace
+from collections.abc import AsyncIterable
 
 tracer = trace.get_tracer("meshagent.tools")
 
@@ -150,6 +151,10 @@ class Toolkit(ToolkitBuilder):
                 )
             else:
                 raise RoomException("tools must extend the Tool class to be invokable")
+            if isinstance(response, AsyncIterable):
+                span.set_attribute("response_type", "stream")
+                return response
+
             response = ensure_response(response)
 
             span.set_attribute("response_type", response.to_json()["type"])

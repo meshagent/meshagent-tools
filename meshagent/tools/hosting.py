@@ -1,7 +1,12 @@
 import logging
 
 from meshagent.tools import Tool, Toolkit, ToolContext
-from meshagent.api.messaging import ErrorResponse, ensure_response, unpack_message
+from meshagent.api.messaging import (
+    ErrorResponse,
+    ensure_response,
+    unpack_message,
+    pack_message,
+)
 from meshagent.api import (
     websocket_protocol,
     RemoteParticipant,
@@ -13,10 +18,12 @@ from meshagent.api import (
 from meshagent.api.protocol import Protocol
 from meshagent.api.room_server_client import RoomClient
 from meshagent.api.room_server_client import RoomException
+from meshagent.api.chan import ChanClosed
 
 from aiohttp import web
 
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
+from collections.abc import AsyncIterable
 import asyncio
 from warnings import deprecated
 import signal
@@ -158,6 +165,35 @@ class RemoteToolkit(Toolkit):
             caller_id = message["caller_id"]
             caller_context = message.get("caller_context", None)
             on_behalf_of_id = message.get("on_behalf_of_id", None)
+            tool_call_id = message.get("tool_call_id", None)
+            if not isinstance(tool_call_id, str) or tool_call_id == "":
+                tool_call_id = str(message_id)
+
+            async def send_tool_call_event(event: Any) -> None:
+                await self._room.protocol.send(
+                    type="agent.tool_call_event",
+                    message_id=message_id,
+                    data=pack_message(
+                        header={
+                            "tool_call_id": tool_call_id,
+                            "event": event,
+                        }
+                    ),
+                )
+
+            event_queue: asyncio.Queue[Optional[Any]] = asyncio.Queue()
+
+            async def forward_events() -> None:
+                while True:
+                    event = await event_queue.get()
+                    if event is None:
+                        return
+                    try:
+                        await send_tool_call_event(event)
+                    except Exception as e:
+                        logger.error("unable to forward tool call event", exc_info=e)
+
+            forward_events_task = asyncio.create_task(forward_events())
             try:
                 caller = None
                 on_behalf_of = None
@@ -189,29 +225,54 @@ class RemoteToolkit(Toolkit):
                     caller=caller,
                     on_behalf_of=on_behalf_of,
                     caller_context=caller_context,
+                    event_handler=lambda event: event_queue.put_nowait(event),
                 )
+                execution_result = None
                 if attachment is None:
-                    response = await self.execute(
+                    execution_result = await self.execute(
                         context=context, name=name, arguments=args
                     )
                 else:
-                    response = await self.execute(
+                    execution_result = await self.execute(
                         context=context,
                         name=name,
                         arguments=args,
                         attachment=attachment,
                     )
-                response = ensure_response(response)
+
+                if isinstance(execution_result, AsyncIterable):
+                    has_last_item = False
+                    last_item: Any = None
+                    async for item in execution_result:
+                        if has_last_item:
+                            event_queue.put_nowait(last_item)
+                        last_item = item
+                        has_last_item = True
+
+                    if has_last_item:
+                        response = ensure_response(last_item)
+                    else:
+                        response = ensure_response(None)
+                else:
+                    response = ensure_response(execution_result)
 
             except Exception as e:
                 logger.error("Tool call failed", exc_info=e)
                 response = ErrorResponse(text=f"{e}")
+            finally:
+                event_queue.put_nowait(None)
+                await forward_events_task
 
-            await self._room.protocol.send(
-                type="agent.tool_call_response",
-                data=response.pack(),
-                message_id=message_id,
-            )
+            try:
+                await self._room.protocol.send(
+                    type="agent.tool_call_response",
+                    data=response.pack(),
+                    message_id=message_id,
+                )
+            except ChanClosed:
+                logger.debug(
+                    "tool call response dropped because room channel is closed"
+                )
 
         task = asyncio.create_task(do_call())
 
