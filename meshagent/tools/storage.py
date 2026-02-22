@@ -9,7 +9,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from meshagent.api.messaging import JsonChunk, LinkChunk, FileChunk
+from meshagent.api.messaging import JsonContent, LinkContent, FileContent
 from meshagent.api import RoomClient, RoomException
 from meshagent.api.room_server_client import StorageEntry
 
@@ -36,7 +36,7 @@ class StorageToolMount(BaseModel):
         context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
-    ) -> FileChunk:
+    ) -> FileContent:
         raise NotImplementedError
 
     async def write_text(
@@ -68,7 +68,7 @@ class StorageToolMount(BaseModel):
 
     async def get_download_url(
         self, *, context: ToolContext, resolved: "_ResolvedStoragePath", path: str
-    ) -> LinkChunk:
+    ) -> LinkContent:
         raise NotImplementedError
 
 
@@ -81,14 +81,14 @@ class StorageToolLocalMount(StorageToolMount):
         context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
-    ) -> FileChunk:
+    ) -> FileContent:
         local_path = _require_local_path(resolved)
         filename = os.path.basename(path)
         mime_type, _ = mimetypes.guess_type(local_path)
         if mime_type is None:
             mime_type = "application/octet-stream"
         data = await _read_local_file(local_path)
-        return FileChunk(mime_type=mime_type, name=filename, data=data)
+        return FileContent(mime_type=mime_type, name=filename, data=data)
 
     async def write_text(
         self,
@@ -124,7 +124,7 @@ class StorageToolLocalMount(StorageToolMount):
 
     async def get_download_url(
         self, *, context: ToolContext, resolved: "_ResolvedStoragePath", path: str
-    ) -> LinkChunk:
+    ) -> LinkContent:
         local_path = _require_local_path(resolved)
         file_path = Path(local_path)
         if not file_path.exists():
@@ -132,7 +132,7 @@ class StorageToolLocalMount(StorageToolMount):
         if not file_path.is_file():
             raise RoomException(f"path is not a file: {local_path}")
         name = os.path.basename(path)
-        return LinkChunk(name=name, url=file_path.resolve().as_uri())
+        return LinkContent(name=name, url=file_path.resolve().as_uri())
 
 
 class StorageToolRoomMount(StorageToolMount):
@@ -144,7 +144,7 @@ class StorageToolRoomMount(StorageToolMount):
         context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
-    ) -> FileChunk:
+    ) -> FileContent:
         room_path = _require_room_path(resolved)
         filename = os.path.basename(path)
         _, extension = os.path.splitext(path)
@@ -157,7 +157,7 @@ class StorageToolRoomMount(StorageToolMount):
             if ext in ["transcript", "thread"] or await context.room.storage.exists(
                 path=schema_path
             ):
-                return FileChunk(
+                return FileContent(
                     mime_type="application/json",
                     name=filename,
                     data=json.dumps(
@@ -212,11 +212,11 @@ class StorageToolRoomMount(StorageToolMount):
 
     async def get_download_url(
         self, *, context: ToolContext, resolved: "_ResolvedStoragePath", path: str
-    ) -> LinkChunk:
+    ) -> LinkContent:
         room_path = _require_room_path(resolved)
         name = os.path.basename(path)
         url = await context.room.storage.download_url(path=room_path)
-        return LinkChunk(name=name, url=url)
+        return LinkContent(name=name, url=url)
 
 
 @dataclass(frozen=True)
@@ -585,7 +585,7 @@ class ListFilesTool(_StorageTool):
         path = kwargs["path"]
         resolved = self._resolve_path(path)
         files = await resolved.mount.list_entries(context=context, resolved=resolved)
-        return JsonChunk(
+        return JsonContent(
             json={"files": list([f.model_dump(mode="json") for f in files])}
         )
 
@@ -672,7 +672,7 @@ class StorageToolkit(RemoteToolkit):
     def _resolve_path(self, path: str) -> _ResolvedStoragePath:
         return _resolve_storage_path(self._mounts, path)
 
-    async def read_file(self, *, context: ToolContext, path: str) -> FileChunk:
+    async def read_file(self, *, context: ToolContext, path: str) -> FileContent:
         resolved = self._resolve_path(path)
         return await resolved.mount.read_file(
             context=context,
@@ -686,7 +686,7 @@ class StorageToolkit(RemoteToolkit):
         resolved = self._resolve_path(path)
         return await resolved.mount.list_entries(context=context, resolved=resolved)
 
-    async def get_download_url(self, *, context: ToolContext, path: str) -> LinkChunk:
+    async def get_download_url(self, *, context: ToolContext, path: str) -> LinkContent:
         resolved = self._resolve_path(path)
         return await resolved.mount.get_download_url(
             context=context,

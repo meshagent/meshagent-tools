@@ -12,7 +12,7 @@ from pydantic import BaseModel, create_model
 
 from meshagent.tools.strict_schema import ensure_strict_json_schema
 
-from meshagent.api.messaging import Chunk, ensure_response
+from meshagent.api.messaging import Content, ensure_content
 
 
 from opentelemetry import trace
@@ -157,7 +157,7 @@ class StreamTool(BaseTool):
         self,
         *,
         context: ToolContext,
-        request_stream: AsyncIterable[Chunk],
+        request_stream: AsyncIterable[Content],
     ):
         raise (Exception("Not implemented"))
 
@@ -170,7 +170,7 @@ def tool(
     rules: Optional[list[str]] = None,
     thumbnail_url: Optional[str] = None,
 ):
-    def decorator(fn: Callable[..., Chunk]):
+    def decorator(fn: Callable[..., Content]):
         signature = inspect.signature(fn)
         hints = get_type_hints(fn, include_extras=True)
 
@@ -262,7 +262,7 @@ def tool(
                 if isinstance(result, BaseModel):
                     result = result.model_dump(mode="json")
 
-                return ensure_response(result)
+                return ensure_content(result)
 
         return FunctionTool()
 

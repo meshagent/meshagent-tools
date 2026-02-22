@@ -1,7 +1,7 @@
 import pytest
 from jsonschema.exceptions import ValidationError
 
-from meshagent.api.messaging import JsonChunk
+from meshagent.api.messaging import JsonContent
 from meshagent.tools import ToolContext
 from meshagent.tools.datetime import DatetimeToolkit
 
@@ -17,7 +17,7 @@ async def test_now_tool_accepts_empty_arguments():
         arguments={},
     )
 
-    assert isinstance(result, JsonChunk)
+    assert isinstance(result, JsonContent)
     assert "utc" in result.json
     assert "local" not in result.json
     assert "tz" not in result.json

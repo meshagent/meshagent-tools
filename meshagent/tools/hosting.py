@@ -2,13 +2,14 @@ import logging
 
 from meshagent.tools import Tool, StreamTool, Toolkit, ToolContext, BaseTool
 from meshagent.api.messaging import (
-    ErrorChunk,
-    Chunk,
-    EmptyChunk,
-    JsonChunk,
-    _ControlChunk,
-    ensure_response,
-    unpack_request_parts,
+    pack_request_parts,
+    ErrorContent,
+    Content,
+    EmptyContent,
+    JsonContent,
+    _ControlContent,
+    ensure_content,
+    unpack_content_parts,
     unpack_message,
     pack_message,
 )
@@ -96,8 +97,8 @@ class RemoteToolkit(Toolkit):
 
         self._room = None
         self.public = public
-        self._request_streams = dict[str, asyncio.Queue[Optional[Chunk]]]()
-        self._pending_request_chunks = dict[str, list[Chunk]]()
+        self._request_streams = dict[str, asyncio.Queue[Optional[Content]]]()
+        self._pending_request_chunks = dict[str, list[Content]]()
 
     @property
     def room(self):
@@ -156,9 +157,9 @@ class RemoteToolkit(Toolkit):
         )
 
     def _enqueue_request_stream_chunk(
-        self, *, queue: asyncio.Queue[Optional[Chunk]], chunk: Chunk
+        self, *, queue: asyncio.Queue[Optional[Content]], chunk: Content
     ) -> None:
-        if isinstance(chunk, _ControlChunk):
+        if isinstance(chunk, _ControlContent):
             if chunk.method == "open":
                 return
             if chunk.method == "close":
@@ -189,7 +190,7 @@ class RemoteToolkit(Toolkit):
             return
 
         try:
-            chunk = unpack_request_parts(header=chunk_header, payload=payload)
+            chunk = unpack_content_parts(header=chunk_header, payload=payload)
         except Exception as ex:
             logger.warning("ignoring malformed request stream chunk", exc_info=ex)
             return
@@ -231,11 +232,11 @@ class RemoteToolkit(Toolkit):
                 tool_call_id = str(message_id)
             request_stream = False
             try:
-                args_as_chunk = unpack_request_parts(header=args, payload=attachment)
+                args_as_chunk = unpack_content_parts(header=args, payload=attachment)
             except Exception:
                 args_as_chunk = None
 
-            if isinstance(args_as_chunk, _ControlChunk):
+            if isinstance(args_as_chunk, _ControlContent):
                 if args_as_chunk.method != "open":
                     raise RoomException(
                         "request stream must start with an open control chunk"
@@ -243,23 +244,22 @@ class RemoteToolkit(Toolkit):
                 request_stream = True
                 args = {}
                 attachment = None
-            elif isinstance(args_as_chunk, JsonChunk):
+            elif isinstance(args_as_chunk, JsonContent):
                 if not isinstance(args_as_chunk.json, dict):
                     raise RoomException(
                         "non-stream tool input json chunk must contain an object"
                     )
                 args = args_as_chunk.json
                 attachment = None
-            elif isinstance(args_as_chunk, EmptyChunk):
+            elif isinstance(args_as_chunk, EmptyContent):
                 args = {}
                 attachment = None
 
             async def send_tool_call_response_chunk(chunk: Any) -> None:
                 payload: bytes | None = None
                 chunk_payload: Any = chunk
-                if isinstance(chunk, Chunk):
-                    chunk_payload = chunk.to_json()
-                    payload = chunk.get_data()
+                if isinstance(chunk, Content):
+                    chunk_payload, payload = pack_request_parts(chunk)
 
                 await self._room.protocol.send(
                     type="agent.tool_call_response_chunk",
@@ -291,7 +291,7 @@ class RemoteToolkit(Toolkit):
             response_sent = False
             stream_close_emitted = False
 
-            async def send_tool_call_response(response: Chunk) -> None:
+            async def send_tool_call_response(response: Content) -> None:
                 nonlocal response_sent
                 if response_sent:
                     return
@@ -343,7 +343,7 @@ class RemoteToolkit(Toolkit):
                 )
                 execution_result = None
                 request_stream_queue = None
-                response: Optional[Chunk] = None
+                response: Optional[Content] = None
 
                 tool = self.get_tool(name)
                 if request_stream:
@@ -356,11 +356,11 @@ class RemoteToolkit(Toolkit):
                         raise RoomException(f"tool '{name}' requires streamed input")
 
                 if request_stream:
-                    request_stream_queue = asyncio.Queue[Optional[Chunk]]()
+                    request_stream_queue = asyncio.Queue[Optional[Content]]()
                     self._request_streams[tool_call_id] = request_stream_queue
                     self._enqueue_request_stream_chunk(
                         queue=request_stream_queue,
-                        chunk=_ControlChunk(method="open"),
+                        chunk=_ControlContent(method="open"),
                     )
 
                     buffered_chunks = self._pending_request_chunks.pop(tool_call_id, [])
@@ -396,27 +396,27 @@ class RemoteToolkit(Toolkit):
                     )
 
                 if isinstance(execution_result, AsyncIterable):
-                    await send_tool_call_response(_ControlChunk(method="open"))
+                    await send_tool_call_response(_ControlContent(method="open"))
                     try:
                         async for item in execution_result:
-                            chunk_queue.put_nowait(ensure_response(item))
+                            chunk_queue.put_nowait(ensure_content(item))
                     except Exception:
                         raise
                     else:
-                        chunk_queue.put_nowait(_ControlChunk(method="close"))
+                        chunk_queue.put_nowait(_ControlContent(method="close"))
                         stream_close_emitted = True
                     response = None
                 else:
-                    response = ensure_response(execution_result)
+                    response = ensure_content(execution_result)
 
             except Exception as e:
                 logger.error("Tool call failed", exc_info=e)
                 if response_sent:
-                    chunk_queue.put_nowait(ErrorChunk(text=f"{e}"))
+                    chunk_queue.put_nowait(ErrorContent(text=f"{e}"))
                     if not stream_close_emitted:
-                        chunk_queue.put_nowait(_ControlChunk(method="close"))
+                        chunk_queue.put_nowait(_ControlContent(method="close"))
                 else:
-                    response = ErrorChunk(text=f"{e}")
+                    response = ErrorContent(text=f"{e}")
             finally:
                 request_stream_queue = self._request_streams.pop(tool_call_id, None)
                 self._pending_request_chunks.pop(tool_call_id, None)

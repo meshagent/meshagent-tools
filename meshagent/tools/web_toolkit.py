@@ -6,7 +6,7 @@ import os
 from urllib.parse import urlparse
 from typing import Optional
 from meshagent.api.http import new_client_session
-from meshagent.api.messaging import FileChunk, JsonChunk, Chunk, TextChunk
+from meshagent.api.messaging import FileContent, JsonContent, Content, TextContent
 from meshagent.tools.config import ToolkitConfig
 from meshagent.tools.tool import Tool, ToolContext
 from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
@@ -38,7 +38,7 @@ class WebFetchTool(Tool):
         )
         self.user_agent = user_agent
 
-    async def execute(self, context: ToolContext, **kwargs: object) -> Chunk:
+    async def execute(self, context: ToolContext, **kwargs: object) -> Content:
         url = str(kwargs.get("url", ""))
         if not url:
             raise ValueError("url is required")
@@ -60,11 +60,11 @@ class WebFetchTool(Tool):
                     try:
                         parsed = json.loads(text)
                     except json.JSONDecodeError:
-                        return TextChunk(text=text)
+                        return TextContent(text=text)
 
                     if isinstance(parsed, dict):
-                        return JsonChunk(json=parsed)
-                    return JsonChunk(json={"data": parsed})
+                        return JsonContent(json=parsed)
+                    return JsonContent(json={"data": parsed})
 
                 if _is_text_content_type(content_type):
                     text = _decode_text(data=data, charset=resp.charset)
@@ -72,18 +72,18 @@ class WebFetchTool(Tool):
                         from html_to_markdown import convert
 
                         text = convert(text)
-                    return TextChunk(text=text)
+                    return TextContent(text=text)
 
                 if _is_file_content_type(content_type):
                     filename = _infer_filename(url=url, content_type=content_type)
-                    return FileChunk(
+                    return FileContent(
                         name=filename,
                         mime_type=content_type or "application/octet-stream",
                         data=data,
                     )
 
                 filename = _infer_filename(url=url, content_type=content_type)
-                return FileChunk(
+                return FileContent(
                     name=filename,
                     mime_type=content_type or "application/octet-stream",
                     data=data,

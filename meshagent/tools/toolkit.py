@@ -1,5 +1,5 @@
 from meshagent.api.room_server_client import RoomException
-from meshagent.api.messaging import Chunk, ensure_response
+from meshagent.api.messaging import Content, ensure_content
 from meshagent.api import RoomClient
 from jsonschema import validate
 import logging
@@ -137,7 +137,7 @@ class Toolkit(ToolkitBuilder):
         name: str,
         arguments: dict,
         attachment: Optional[bytes] = None,
-        request_stream: Optional[AsyncIterable[Chunk]] = None,
+        request_stream: Optional[AsyncIterable[Content]] = None,
     ):
         with tracer.start_as_current_span("toolkit.execute") as span:
             span.set_attributes(
@@ -184,7 +184,7 @@ class Toolkit(ToolkitBuilder):
                 span.set_attribute("response_type", "stream")
                 return response
 
-            response = ensure_response(response)
+            response = ensure_content(response)
 
             span.set_attribute("response_type", response.to_json()["type"])
             return response
