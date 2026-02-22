@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel
 
-from meshagent.api.messaging import JsonResponse
+from meshagent.api.messaging import JsonChunk, TextChunk
 from meshagent.tools import Toolkit, ToolContext, tool
 
 
@@ -32,7 +32,7 @@ async def test_decorated_tool_executes_with_toolkit():
         arguments={"payload": {"name": "alpha", "count": 2}, "flag": True},
     )
 
-    assert isinstance(result, JsonResponse)
+    assert isinstance(result, JsonChunk)
     assert result.json == {"name": "alpha", "count": 2, "flag": True}
 
 
@@ -57,8 +57,8 @@ async def test_decorated_method_executes_with_toolkit():
         arguments={"name": "mesh"},
     )
 
-    assert isinstance(result, JsonResponse)
-    assert result.json == "hello mesh"
+    assert isinstance(result, TextChunk)
+    assert result.text == "hello mesh"
 
 
 def test_decorator_schema_is_strict():

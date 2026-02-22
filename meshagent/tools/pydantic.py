@@ -3,7 +3,7 @@ from abc import abstractmethod
 import logging
 from typing import Optional
 
-from meshagent.api.messaging import Response
+from meshagent.api.messaging import Chunk
 from meshagent.tools import Tool, ToolContext
 
 logger = logging.getLogger("pydantic_tool")
@@ -37,5 +37,5 @@ class PydanticTool[TInput: BaseModel](Tool):
     @abstractmethod
     async def execute_model(
         self, *, context: ToolContext, arguments: TInput
-    ) -> Response | dict | None | str:
+    ) -> Chunk | dict | None | str:
         pass

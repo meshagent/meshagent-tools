@@ -12,7 +12,7 @@ from pydantic import BaseModel, create_model
 
 from meshagent.tools.strict_schema import ensure_strict_json_schema
 
-from meshagent.api.messaging import Response, ensure_response
+from meshagent.api.messaging import Chunk, ensure_response
 
 
 from opentelemetry import trace
@@ -53,10 +53,6 @@ class ToolContext:
     @property
     def caller_context(self) -> Optional[Dict[str, Any]]:
         return self._caller_context
-
-    @property
-    def event_handler(self) -> Optional[Callable[[dict], None]]:
-        return self._event_handler
 
     def emit(self, event: dict):
         if self._event_handler is not None:
@@ -123,17 +119,46 @@ class Tool(BaseTool):
         self.input_schema = input_schema
         self.defs = defs
 
-        openai_schema = {**input_schema}
+    async def execute(self, context: ToolContext, **kwargs):
+        raise (Exception("Not implemented"))
 
-        if defs is not None:
-            openai_schema["$defs"] = {**defs}
 
-    async def invoke(
-        self, context: ToolContext, arguments: dict, attachment: Optional[bytes] = None
-    ) -> Response:
-        return await self.execute(context=context, **arguments)
+class StreamTool(BaseTool):
+    def __init__(
+        self,
+        *,
+        name: str,
+        input_schema: dict,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        rules: Optional[list[str]] = None,
+        thumbnail_url: Optional[str] = None,
+        defs: Optional[dict[str, dict]] = None,
+        supports_context: Optional[bool] = None,
+    ):
+        super().__init__(
+            name=name,
+            title=title,
+            description=description,
+            rules=rules,
+            thumbnail_url=thumbnail_url,
+            supports_context=supports_context,
+        )
 
-    async def execute(self, context: ToolContext, **kwargs) -> Response:
+        if not isinstance(input_schema, dict):
+            raise Exception(
+                "schema must be a dict, got: {type}".format(type=type(input_schema))
+            )
+
+        self.input_schema = input_schema
+        self.defs = defs
+
+    async def execute(
+        self,
+        *,
+        context: ToolContext,
+        request_stream: AsyncIterable[Chunk],
+    ):
         raise (Exception("Not implemented"))
 
 
@@ -145,7 +170,7 @@ def tool(
     rules: Optional[list[str]] = None,
     thumbnail_url: Optional[str] = None,
 ):
-    def decorator(fn: Callable[..., Response]):
+    def decorator(fn: Callable[..., Chunk]):
         signature = inspect.signature(fn)
         hints = get_type_hints(fn, include_extras=True)
 
@@ -207,12 +232,11 @@ def tool(
 
                 return FunctionTool(bound_instance=instance)
 
-            async def invoke(
+            async def execute(
                 self,
                 context: ToolContext,
-                arguments: dict,
-                attachment: Optional[bytes] = None,
-            ) -> Response:
+                **arguments,
+            ):
                 data = InputModel.model_validate(arguments)
                 parsed_args = {field: getattr(data, field) for field in fields}
 

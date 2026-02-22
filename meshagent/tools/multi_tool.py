@@ -1,4 +1,4 @@
-from meshagent.api.messaging import FileResponse, JsonResponse, Response
+from meshagent.api.messaging import FileChunk, JsonChunk, Chunk
 from .tool import (
     Tool,
     BaseTool,
@@ -84,7 +84,7 @@ class MultiTool(Tool):
 
     async def execute(self, context, **kwargs):
         calls = []
-        results = dict[str, Response]()
+        results = dict[str, Chunk]()
 
         async def call_subtool(k, args):
             results[k] = await self._subtools[k].execute(context=context, **args)
@@ -101,21 +101,21 @@ class MultiTool(Tool):
             result = results[k]
 
             # aggregate usage values
-            if isinstance(result, Response):
+            if isinstance(result, Chunk):
                 if result.usage is not None:
                     for usage_key, usage_value in result.usage.items():
                         usage[usage_key] = usage.get(usage_key, 0) + usage_value
 
-            if isinstance(result, FileResponse):
+            if isinstance(result, FileChunk):
                 return result
 
-            elif isinstance(result, Response):
+            elif isinstance(result, Chunk):
                 output[k] = result.to_json()
 
             else:
                 output[k] = result
 
-        return JsonResponse(json=output, usage=usage)
+        return JsonChunk(json=output, usage=usage)
 
 
 # MultiToolkit can be used to combine multiple tools into one, this can be useful if you want to make sure that every tool call also produces a toast for example

@@ -10,11 +10,11 @@ The ``ToolContext`` tracks the room, caller, and optional "on-behalf-of" partici
 A ``Tool`` encapsulates a single operation with an input JSON schema. Each tool implements an ``execute`` function where you define the logic for the tool. The ``Toolkit`` groups tools together and can enforce rules or descriptions.
 
 ### Response Types
-Response types specify the output that a tool should return. This helps the tool and agent know how to handle the response appropriately. Response types include: ``JsonResponse``, ``TextResponse``, and ``FileResponse``.
+Response types specify the output that a tool should return. This helps the tool and agent know how to handle the response appropriately. Response types include: ``JsonChunk``, ``TextChunk``, and ``FileChunk``.
 
 ```Python Python
 from meshagent.tools import Tool, Toolkit, ToolContext
-from meshagent.api.messaging import TextResponse
+from meshagent.api.messaging import TextChunk
 
 class MyNewTool(Tool):
     def __init__(self):
@@ -31,7 +31,7 @@ class MyNewTool(Tool):
         )
     async def execute(self, ctx:ToolContext, sample_parameter:str):
         # tool logic
-        return TextResponse(text="Tool logic complete")
+        return TextChunk(text="Tool logic complete")
     
 class MyNewToolkit(Toolkit):
     def __init__(self):

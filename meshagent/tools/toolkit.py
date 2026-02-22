@@ -1,14 +1,15 @@
 from meshagent.api.room_server_client import RoomException
-from meshagent.api.messaging import ensure_response
+from meshagent.api.messaging import Chunk, ensure_response
 from meshagent.api import RoomClient
 from jsonschema import validate
 import logging
 
 import json
+import inspect
 
 from typing import Optional, Literal
 from meshagent.tools.config import ToolkitConfig
-from meshagent.tools.tool import ToolContext, BaseTool, Tool
+from meshagent.tools.tool import ToolContext, BaseTool, Tool, StreamTool
 
 from opentelemetry import trace
 from collections.abc import AsyncIterable
@@ -16,6 +17,18 @@ from collections.abc import AsyncIterable
 tracer = trace.get_tracer("meshagent.tools")
 
 logger = logging.getLogger("tools")
+
+
+def _tool_accepts_attachment_argument(tool: Tool) -> bool:
+    signature = inspect.signature(tool.execute)
+    if "attachment" in signature.parameters:
+        return True
+
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+
+    return False
 
 
 def _schema_allows_null(schema: object) -> bool:
@@ -124,6 +137,7 @@ class Toolkit(ToolkitBuilder):
         name: str,
         arguments: dict,
         attachment: Optional[bytes] = None,
+        request_stream: Optional[AsyncIterable[Chunk]] = None,
     ):
         with tracer.start_as_current_span("toolkit.execute") as span:
             span.set_attributes(
@@ -131,6 +145,10 @@ class Toolkit(ToolkitBuilder):
             )
 
             tool = self.get_tool(name)
+            if not isinstance(tool, (Tool, StreamTool)):
+                raise RoomException(
+                    "tools must extend the Tool or StreamTool class to be invokable"
+                )
 
             schema = {
                 **tool.input_schema,
@@ -143,14 +161,25 @@ class Toolkit(ToolkitBuilder):
             )
 
             validate(normalized_arguments, schema)
-            if isinstance(tool, Tool):
-                response = await tool.invoke(
+            if request_stream is not None:
+                if not isinstance(tool, StreamTool):
+                    raise RoomException(f"tool '{name}' does not accept streamed input")
+                response = await tool.execute(
                     context=context,
-                    arguments=normalized_arguments,
-                    attachment=attachment,
+                    request_stream=request_stream,
                 )
             else:
-                raise RoomException("tools must extend the Tool class to be invokable")
+                if not isinstance(tool, Tool):
+                    raise RoomException(f"tool '{name}' requires streamed input")
+                if attachment is not None and _tool_accepts_attachment_argument(tool):
+                    normalized_arguments = {
+                        **normalized_arguments,
+                        "attachment": attachment,
+                    }
+                response = await tool.execute(
+                    context=context,
+                    **normalized_arguments,
+                )
             if isinstance(response, AsyncIterable):
                 span.set_attribute("response_type", "stream")
                 return response

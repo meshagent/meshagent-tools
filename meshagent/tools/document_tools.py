@@ -1,4 +1,4 @@
-from meshagent.api.messaging import TextResponse, JsonResponse
+from meshagent.api.messaging import TextChunk, JsonChunk
 
 from .tool import (
     Tool,
@@ -49,7 +49,7 @@ class RootInsertTool(Tool):
 
         document = documents[path]
         element = document.root.append_json(kwargs)
-        return TextResponse(text=f"The content was inserted with the id: {element.id}")
+        return TextChunk(text=f"The content was inserted with the id: {element.id}")
 
 
 class ElementInsertTool(Tool):
@@ -108,7 +108,7 @@ class ElementInsertTool(Tool):
             element = document.root.get_node_by_id(parent_element_id).append_json(
                 kwargs
             )
-        return TextResponse(text=f"The content was inserted with the id: {element.id}")
+        return TextChunk(text=f"The content was inserted with the id: {element.id}")
 
 
 class RemoveElementTool(Tool):
@@ -146,10 +146,10 @@ class RemoveElementTool(Tool):
 
         node = document.root.get_node_by_id(id)
         if node is None:
-            return TextResponse(text="there was no matching node")
+            return TextChunk(text="there was no matching node")
         else:
             node.delete()
-            return TextResponse(text="the node was deleted")
+            return TextChunk(text="the node was deleted")
 
 
 class SetAttributeTool(Tool):
@@ -195,10 +195,10 @@ class SetAttributeTool(Tool):
 
         node = document.root.get_node_by_id(id)
         if node is None:
-            return TextResponse(text="there was no matching node")
+            return TextChunk(text="there was no matching node")
         else:
             node[attribute_name] = attribute_value
-            return TextResponse(text="the node was updated")
+            return TextChunk(text="the node was updated")
 
 
 class GetDocumentJSONTool(Tool):
@@ -223,7 +223,7 @@ class GetDocumentJSONTool(Tool):
 
         document = documents[path]
 
-        return JsonResponse(json=document.root.to_json(include_ids=True))
+        return JsonChunk(json=document.root.to_json(include_ids=True))
 
 
 def build_tools(schema: MeshSchema, document_type: str):
