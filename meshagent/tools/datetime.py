@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 from zoneinfo import ZoneInfo
 from .config import ToolkitConfig
-from .tool import Tool
+from .tool import FunctionTool
 from .toolkit import ToolContext, ToolkitBuilder
 from .hosting import RemoteToolkit, Toolkit
 from meshagent.api.room_server_client import RoomClient
@@ -120,7 +120,7 @@ def _end_of_week(dt: datetime, week_start: int) -> datetime:
 # ----------------------------
 
 
-class NowTool(Tool):
+class NowTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="now",
@@ -148,7 +148,7 @@ class NowTool(Tool):
         return out
 
 
-class TodayTool(Tool):
+class TodayTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="today_range",
@@ -174,7 +174,7 @@ class TodayTool(Tool):
         return {"start": _iso(start), "end": _iso(end), "tz": tz or "UTC"}
 
 
-class WeekRangeTool(Tool):
+class WeekRangeTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="week_range",
@@ -223,7 +223,7 @@ class WeekRangeTool(Tool):
         }
 
 
-class MonthRangeTool(Tool):
+class MonthRangeTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="month_range",
@@ -261,7 +261,7 @@ class MonthRangeTool(Tool):
         }
 
 
-class AddDurationTool(Tool):
+class AddDurationTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="add_duration",
@@ -302,7 +302,7 @@ class AddDurationTool(Tool):
         return {"dt": _iso(out), "tz": tz or "UTC"}
 
 
-class DiffTool(Tool):
+class DiffTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="diff",
@@ -354,7 +354,7 @@ class DiffTool(Tool):
         }
 
 
-class ParseTool(Tool):
+class ParseTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="parse_iso",
@@ -410,7 +410,7 @@ class ParseTool(Tool):
         }
 
 
-class FormatTool(Tool):
+class FormatTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="format_dt",
@@ -453,7 +453,7 @@ class FormatTool(Tool):
         return {"text": parsed.strftime(fmt)}
 
 
-class UtcZTool(Tool):
+class UtcZTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="to_utc_z",

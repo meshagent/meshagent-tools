@@ -1,12 +1,15 @@
 import logging
 
-from meshagent.tools import Tool, StreamTool, Toolkit, ToolContext, BaseTool
+from meshagent.tools import FunctionTool, ContentTool, Toolkit, ToolContext, BaseTool
 from meshagent.api.messaging import (
     pack_request_parts,
     ErrorContent,
     Content,
     EmptyContent,
     JsonContent,
+    TextContent,
+    FileContent,
+    LinkContent,
     _ControlContent,
     ensure_content,
     unpack_content_parts,
@@ -22,22 +25,23 @@ from meshagent.api import (
     RoomMessage,
 )
 from meshagent.api.protocol import Protocol
-from meshagent.api.room_server_client import RoomClient
-from meshagent.api.room_server_client import RoomException
+from meshagent.api.room_server_client import RoomClient, RoomException, ToolContentSpec
 from meshagent.api.chan import ChanClosed
 
 from aiohttp import web
 
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Literal
 from collections.abc import AsyncIterable
 import asyncio
 from warnings import deprecated
 import signal
+from jsonschema import ValidationError, validate
 
 logger = logging.getLogger("hosting")
+ValidationMode = Literal["full", "content_types", "none"]
 
 
-class RemoteTool(Tool):
+class RemoteTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -71,6 +75,53 @@ class RemoteTool(Tool):
 
 
 class RemoteToolkit(Toolkit):
+    """Remote toolkit host protocol contract.
+
+    Wire protocol:
+    - `agent.invoke_tool` starts a call and includes `tool_call_id`.
+    - `arguments` always carries the first input content header.
+      - Unary input: any content header (`json`, `text`, `file`, `link`, `empty`).
+      - Stream input: `_ControlContent(method="open")`.
+    - Streamed request items are sent as `agent.tool_call_request_chunk` with
+      `{"tool_call_id", "chunk"}`; each chunk may include payload bytes.
+    - Request stream `open`/`close` control chunks are transport framing and are
+      not forwarded to tool implementations.
+
+    Dispatch semantics:
+    - Streamed request input (`open` first chunk) requires a `ContentTool`.
+    - Unary request input:
+      - `FunctionTool` receives JSON object kwargs.
+      - `ContentTool` receives a single `Content` input.
+    - Request chunks received before a stream is attached are buffered per
+      `tool_call_id` and replayed in order once attached.
+
+    Response semantics:
+    - Unary output: one `agent.tool_call_response`.
+    - Streaming output:
+      1. send `agent.tool_call_response` with `_ControlContent(method="open")`
+      2. send each item via `agent.tool_call_response_chunk`
+      3. send `_ControlContent(method="close")` via `agent.tool_call_response_chunk`
+    - Tool return values are normalized with `ensure_content`.
+
+    Validation (`validation_mode`):
+    - `none`: no spec/schema validation.
+    - `content_types`: validate declared `input_spec` / `output_spec`
+      content kinds and stream-vs-unary mode.
+    - `full` (default): `content_types` plus JSON Schema validation:
+      - unary input/output validates one item
+      - streamed input/output validates each item in the stream
+      - if `$defs` are declared on the tool, they are merged into schema validation.
+    - Validation failures are surfaced as tool-call errors:
+      - before response-stream open: unary `ErrorContent` response
+      - after response-stream open: `ErrorContent` chunk followed by stream `close`.
+
+    Error/disconnect semantics:
+    - Tool execution errors use the same unary/stream error path as validation.
+    - Early input disconnect unblocks active request-stream readers and removes
+      pending stream state for cleanup.
+    - Response streams are always terminated with `close` after post-open errors.
+    """
+
     def __init__(
         self,
         *,
@@ -80,6 +131,7 @@ class RemoteToolkit(Toolkit):
         description: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
         public: bool = True,
+        validation_mode: ValidationMode = "full",
     ):
         super().__init__(
             name=name,
@@ -97,8 +149,173 @@ class RemoteToolkit(Toolkit):
 
         self._room = None
         self.public = public
+        if validation_mode not in ("full", "content_types", "none"):
+            raise ValueError(
+                "validation_mode must be one of 'full', 'content_types', or 'none'"
+            )
+        self.validation_mode: ValidationMode = validation_mode
         self._request_streams = dict[str, asyncio.Queue[Optional[Content]]]()
         self._pending_request_chunks = dict[str, list[Content]]()
+
+    def _should_validate_content_types(self) -> bool:
+        return self.validation_mode in ("full", "content_types")
+
+    def _should_validate_schema(self) -> bool:
+        return self.validation_mode == "full"
+
+    @staticmethod
+    def _content_kind(content: Content) -> str:
+        if isinstance(content, JsonContent):
+            return "json"
+        if isinstance(content, TextContent):
+            return "text"
+        if isinstance(content, FileContent):
+            return "file"
+        if isinstance(content, LinkContent):
+            return "link"
+        if isinstance(content, EmptyContent):
+            return "empty"
+        if isinstance(content, _ControlContent):
+            return "control"
+        if isinstance(content, ErrorContent):
+            return "error"
+        content_type = content.to_json().get("type", None)
+        if isinstance(content_type, str):
+            return content_type
+        return "unknown"
+
+    @staticmethod
+    def _schema_value_for_content(content: Content) -> Any:
+        if isinstance(content, JsonContent):
+            return content.json
+        if isinstance(content, TextContent):
+            return content.text
+        if isinstance(content, EmptyContent):
+            return None
+        if isinstance(content, LinkContent):
+            return {"name": content.name, "url": content.url}
+        if isinstance(content, FileContent):
+            return {
+                "name": content.name,
+                "mime_type": content.mime_type,
+                "size": len(content.data),
+            }
+        if isinstance(content, _ControlContent):
+            return {"method": content.method}
+        if isinstance(content, ErrorContent):
+            return {"text": content.text}
+        return content.to_json()
+
+    @staticmethod
+    def _schema_with_defs(
+        *, schema: dict | None, defs: Optional[dict[str, dict]]
+    ) -> dict | None:
+        if schema is None:
+            return None
+        merged = {**schema}
+        if defs is None:
+            return merged
+        existing_defs = merged.get("$defs", None)
+        if isinstance(existing_defs, dict):
+            merged["$defs"] = {**defs, **existing_defs}
+        else:
+            merged["$defs"] = {**defs}
+        return merged
+
+    def _validate_stream_mode(
+        self,
+        *,
+        tool_name: str,
+        direction: Literal["input", "output"],
+        spec: ToolContentSpec | None,
+        stream: bool,
+    ) -> None:
+        if spec is None or not self._should_validate_content_types():
+            return
+        if spec.stream != stream:
+            expected = "streamed" if spec.stream else "single-content"
+            actual = "streamed" if stream else "single-content"
+            raise RoomException(
+                f"tool '{tool_name}' {direction} is {actual} but {direction}_spec requires {expected} {direction}"
+            )
+
+    def _validate_content_type(
+        self,
+        *,
+        tool_name: str,
+        direction: Literal["input", "output"],
+        spec: ToolContentSpec | None,
+        content: Content,
+    ) -> None:
+        if spec is None or not self._should_validate_content_types():
+            return
+        content_type = self._content_kind(content)
+        if content_type not in spec.types:
+            allowed = ", ".join(spec.types)
+            raise RoomException(
+                f"tool '{tool_name}' {direction} content type '{content_type}' is not allowed by {direction}_spec ({allowed})"
+            )
+
+    def _validate_schema(
+        self,
+        *,
+        tool_name: str,
+        direction: Literal["input", "output"],
+        content: Content,
+        schema: dict | None,
+        defs: Optional[dict[str, dict]],
+    ) -> None:
+        if not self._should_validate_schema():
+            return
+        resolved_schema = self._schema_with_defs(schema=schema, defs=defs)
+        if resolved_schema is None:
+            return
+        try:
+            validate(
+                instance=self._schema_value_for_content(content),
+                schema=resolved_schema,
+            )
+        except ValidationError as ex:
+            raise RoomException(
+                f"tool '{tool_name}' {direction} does not match {direction}_schema: {ex.message}"
+            ) from ex
+
+    def _validate_input_content(
+        self,
+        *,
+        tool: BaseTool,
+        content: Content,
+        validate_schema: bool,
+    ) -> None:
+        self._validate_content_type(
+            tool_name=tool.name,
+            direction="input",
+            spec=tool.input_spec,
+            content=content,
+        )
+        if validate_schema:
+            self._validate_schema(
+                tool_name=tool.name,
+                direction="input",
+                content=content,
+                schema=tool.input_schema,
+                defs=tool.defs,
+            )
+
+    def _validate_output_content(self, *, tool: BaseTool, content: Content) -> None:
+        self._validate_content_type(
+            tool_name=tool.name,
+            direction="output",
+            spec=tool.output_spec,
+            content=content,
+        )
+        self._validate_schema(
+            tool_name=tool.name,
+            direction="output",
+            content=content,
+            schema=tool.output_schema,
+            defs=tool.defs,
+        )
 
     @property
     def room(self):
@@ -223,7 +440,7 @@ class RemoteToolkit(Toolkit):
             # Decode and parse the message
             message, attachment = unpack_message(data)
             name = self._unmangle(message["name"])
-            args = message["arguments"]
+            raw_arguments = message["arguments"]
             caller_id = message["caller_id"]
             caller_context = message.get("caller_context", None)
             on_behalf_of_id = message.get("on_behalf_of_id", None)
@@ -232,28 +449,24 @@ class RemoteToolkit(Toolkit):
                 tool_call_id = str(message_id)
             request_stream = False
             try:
-                args_as_chunk = unpack_content_parts(header=args, payload=attachment)
+                input_content = unpack_content_parts(
+                    header=raw_arguments, payload=attachment
+                )
             except Exception:
-                args_as_chunk = None
+                if not isinstance(raw_arguments, dict):
+                    raise RoomException("'arguments' must be a content header object")
+                if attachment not in (None, b""):
+                    raise RoomException(
+                        "legacy binary attachment tool input is no longer supported; send a file content input instead"
+                    )
+                input_content = JsonContent(json=raw_arguments)
 
-            if isinstance(args_as_chunk, _ControlContent):
-                if args_as_chunk.method != "open":
+            if isinstance(input_content, _ControlContent):
+                if input_content.method != "open":
                     raise RoomException(
                         "request stream must start with an open control chunk"
                     )
                 request_stream = True
-                args = {}
-                attachment = None
-            elif isinstance(args_as_chunk, JsonContent):
-                if not isinstance(args_as_chunk.json, dict):
-                    raise RoomException(
-                        "non-stream tool input json chunk must contain an object"
-                    )
-                args = args_as_chunk.json
-                attachment = None
-            elif isinstance(args_as_chunk, EmptyContent):
-                args = {}
-                attachment = None
 
             async def send_tool_call_response_chunk(chunk: Any) -> None:
                 payload: bytes | None = None
@@ -347,13 +560,21 @@ class RemoteToolkit(Toolkit):
 
                 tool = self.get_tool(name)
                 if request_stream:
-                    if not isinstance(tool, StreamTool):
+                    if not isinstance(tool, ContentTool):
                         raise RoomException(
                             f"tool '{name}' does not accept streamed input"
                         )
                 else:
-                    if not isinstance(tool, Tool):
-                        raise RoomException(f"tool '{name}' requires streamed input")
+                    if not isinstance(tool, (FunctionTool, ContentTool)):
+                        raise RoomException(
+                            "tools must extend FunctionTool or ContentTool to be invokable"
+                        )
+                self._validate_stream_mode(
+                    tool_name=name,
+                    direction="input",
+                    spec=tool.input_spec,
+                    stream=request_stream,
+                )
 
                 if request_stream:
                     request_stream_queue = asyncio.Queue[Optional[Content]]()
@@ -377,29 +598,75 @@ class RemoteToolkit(Toolkit):
                                 return
                             yield item
 
-                    execution_result = await self.execute(
+                    async def validated_attachment_stream():
+                        async for item in attachment_stream():
+                            normalized_item = ensure_content(item)
+                            self._validate_input_content(
+                                tool=tool,
+                                content=normalized_item,
+                                validate_schema=True,
+                            )
+                            yield normalized_item
+
+                    execution_result = await tool.execute(
                         context=context,
-                        name=name,
-                        arguments=args,
-                        request_stream=attachment_stream(),
-                    )
-                elif attachment is None:
-                    execution_result = await self.execute(
-                        context=context, name=name, arguments=args
+                        input=validated_attachment_stream(),
                     )
                 else:
-                    execution_result = await self.execute(
-                        context=context,
-                        name=name,
-                        arguments=args,
-                        attachment=attachment,
-                    )
+                    if isinstance(tool, ContentTool):
+                        normalized_input_content = ensure_content(input_content)
+                        self._validate_input_content(
+                            tool=tool,
+                            content=normalized_input_content,
+                            validate_schema=True,
+                        )
+                        execution_result = await tool.execute(
+                            context=context,
+                            input=normalized_input_content,
+                        )
+                    else:
+                        if isinstance(input_content, EmptyContent):
+                            args = {}
+                        elif isinstance(input_content, JsonContent):
+                            if not isinstance(input_content.json, dict):
+                                raise RoomException(
+                                    "non-stream function tool input json chunk must contain an object"
+                                )
+                            args = input_content.json
+                        else:
+                            raise RoomException(
+                                f"tool '{name}' requires JSON object input"
+                            )
+                        # FunctionTool schemas are validated by Toolkit.execute against kwargs.
+                        # Validate declared content kinds against the normalized JSON call shape.
+                        self._validate_input_content(
+                            tool=tool,
+                            content=JsonContent(json=args),
+                            validate_schema=False,
+                        )
+
+                        execution_result = await self.execute(
+                            context=context,
+                            name=name,
+                            input=JsonContent(json=args),
+                        )
 
                 if isinstance(execution_result, AsyncIterable):
+                    self._validate_stream_mode(
+                        tool_name=name,
+                        direction="output",
+                        spec=tool.output_spec,
+                        stream=True,
+                    )
                     await send_tool_call_response(_ControlContent(method="open"))
                     try:
                         async for item in execution_result:
-                            chunk_queue.put_nowait(ensure_content(item))
+                            normalized_output = ensure_content(item)
+                            self._validate_output_content(
+                                tool=tool,
+                                content=normalized_output,
+                            )
+                            chunk_queue.put_nowait(normalized_output)
                     except Exception:
                         raise
                     else:
@@ -407,10 +674,17 @@ class RemoteToolkit(Toolkit):
                         stream_close_emitted = True
                     response = None
                 else:
+                    self._validate_stream_mode(
+                        tool_name=name,
+                        direction="output",
+                        spec=tool.output_spec,
+                        stream=False,
+                    )
                     response = ensure_content(execution_result)
+                    self._validate_output_content(tool=tool, content=response)
 
             except Exception as e:
-                logger.error("Tool call failed", exc_info=e)
+                logger.error("tool call failed", exc_info=e)
                 if response_sent:
                     chunk_queue.put_nowait(ErrorContent(text=f"{e}"))
                     if not stream_close_emitted:
@@ -434,7 +708,7 @@ class RemoteToolkit(Toolkit):
             try:
                 task.result()
             except Exception as e:
-                logger.error("Tool call failed", exc_info=e)
+                logger.error("tool call failed", exc_info=e)
 
         task.add_done_callback(on_done)
 
@@ -444,17 +718,24 @@ class RemoteToolkit(Toolkit):
         for tool in self.tools:
             if tool.name in children:
                 raise RoomException(f"duplicate tool name {tool.name}")
-            if not isinstance(tool, (Tool, StreamTool)):
+            if not isinstance(tool, (FunctionTool, ContentTool)):
                 raise RoomException(
-                    f"tool '{tool.name}' must extend Tool or StreamTool"
+                    f"tool '{tool.name}' must extend FunctionTool or ContentTool"
                 )
 
             children[self._mangle(tool.name)] = {
                 "title": tool.title,
                 "description": tool.description,
-                "input_schema": tool.input_schema,
+                "input_spec": None
+                if tool.input_spec is None
+                else tool.input_spec.to_json(),
+                "output_spec": None
+                if tool.output_spec is None
+                else tool.output_spec.to_json(),
                 "thumbnail_url": tool.thumbnail_url,
                 "defs": tool.defs,
+                "pricing": tool.pricing,
+                "supports_context": tool.supports_context,
             }
 
         result = await self._room.send_request(

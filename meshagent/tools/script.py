@@ -1,5 +1,5 @@
 from meshagent.api import RoomClient
-from meshagent.tools.tool import Tool, ToolContext
+from meshagent.tools.tool import FunctionTool, ToolContext
 from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
 
 
@@ -67,7 +67,7 @@ class ScriptToolkitBuilder(ToolkitBuilder):
         )
 
 
-class ScriptTool(Tool):
+class ScriptTool(FunctionTool):
     def __init__(
         self,
         *,

@@ -1,7 +1,7 @@
 from meshagent.api.messaging import TextContent, JsonContent
 
 from .tool import (
-    Tool,
+    FunctionTool,
     ToolContext,
 )
 
@@ -15,7 +15,7 @@ import logging
 logger = logging.getLogger("document_tools")
 
 
-class RootInsertTool(Tool):
+class RootInsertTool(FunctionTool):
     def __init__(self, *, document_type: str, schema: MeshSchema, element: ElementType):
         self.element = element
         full_schema = schema.to_json()
@@ -52,7 +52,7 @@ class RootInsertTool(Tool):
         return TextContent(text=f"The content was inserted with the id: {element.id}")
 
 
-class ElementInsertTool(Tool):
+class ElementInsertTool(FunctionTool):
     def __init__(self, *, document_type: str, schema: MeshSchema, element: ElementType):
         self.element = element
 
@@ -111,7 +111,7 @@ class ElementInsertTool(Tool):
         return TextContent(text=f"The content was inserted with the id: {element.id}")
 
 
-class RemoveElementTool(Tool):
+class RemoveElementTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="remove_element_by_id",
@@ -152,7 +152,7 @@ class RemoveElementTool(Tool):
             return TextContent(text="the node was deleted")
 
 
-class SetAttributeTool(Tool):
+class SetAttributeTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="set_attribute",
@@ -201,7 +201,7 @@ class SetAttributeTool(Tool):
             return TextContent(text="the node was updated")
 
 
-class GetDocumentJSONTool(Tool):
+class GetDocumentJSONTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="get_document",
@@ -227,7 +227,7 @@ class GetDocumentJSONTool(Tool):
 
 
 def build_tools(schema: MeshSchema, document_type: str):
-    tools = list[Tool]()
+    tools = list[FunctionTool]()
 
     # for prop in schema.root.properties:
     #    if isinstance(prop, ChildProperty):
@@ -260,7 +260,7 @@ def build_tools(schema: MeshSchema, document_type: str):
     return tools
 
 
-class DocumentOpenTool(Tool):
+class DocumentOpenTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="meshagent.document.open",
@@ -287,7 +287,7 @@ class DocumentOpenTool(Tool):
         return None
 
 
-class DocumentCloseTool(Tool):
+class DocumentCloseTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="meshagent.document.close",

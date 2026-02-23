@@ -1,10 +1,10 @@
 import uuid
-from .tool import Tool
+from .tool import FunctionTool
 from .toolkit import ToolContext
 from .hosting import RemoteToolkit
 
 
-class UuidV4Tool(Tool):
+class UuidV4Tool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="uuid_v4",

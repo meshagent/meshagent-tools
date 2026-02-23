@@ -14,7 +14,7 @@ async def test_now_tool_accepts_empty_arguments():
     result = await toolkit.execute(
         context=context,
         name="now",
-        arguments={},
+        input=JsonContent(json={}),
     )
 
     assert isinstance(result, JsonContent)
@@ -26,7 +26,8 @@ async def test_now_tool_accepts_empty_arguments():
 def test_datetime_tool_schemas_remain_strict_for_openai():
     toolkit = DatetimeToolkit()
     required_by_tool = {
-        tool.name: set(tool.input_schema.get("required", [])) for tool in toolkit.tools
+        tool.name: set((tool.input_schema or {}).get("required", []))
+        for tool in toolkit.tools
     }
 
     assert required_by_tool["now"] == {"tz"}
@@ -56,5 +57,5 @@ async def test_non_nullable_required_fields_are_not_auto_filled():
         await toolkit.execute(
             context=context,
             name="add_duration",
-            arguments={},
+            input=JsonContent(json={}),
         )

@@ -14,7 +14,7 @@ from meshagent.api import RoomClient, RoomException
 from meshagent.api.room_server_client import StorageEntry
 
 from .config import ToolkitConfig
-from .tool import Tool
+from .tool import FunctionTool
 from .toolkit import ToolContext, ToolkitBuilder
 from .hosting import RemoteToolkit, Toolkit
 from .blob import get_bytes_from_url
@@ -458,7 +458,7 @@ async def _list_local_entries(path: str) -> list[StorageEntry]:
     return await asyncio.to_thread(_list)
 
 
-class _StorageTool(Tool):
+class _StorageTool(FunctionTool):
     def __init__(self, *, mounts: list[_PreparedMount], **kwargs):
         super().__init__(**kwargs)
         self._mounts = mounts

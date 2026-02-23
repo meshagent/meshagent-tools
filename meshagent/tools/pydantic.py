@@ -4,12 +4,12 @@ import logging
 from typing import Optional
 
 from meshagent.api.messaging import Content
-from meshagent.tools import Tool, ToolContext
+from meshagent.tools import FunctionTool, ToolContext
 
 logger = logging.getLogger("pydantic_tool")
 
 
-class PydanticTool[TInput: BaseModel](Tool):
+class PydanticTool[TInput: BaseModel](FunctionTool):
     def __init__(
         self,
         name: str,

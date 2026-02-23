@@ -8,7 +8,7 @@ from typing import Optional
 from meshagent.api.http import new_client_session
 from meshagent.api.messaging import FileContent, JsonContent, Content, TextContent
 from meshagent.tools.config import ToolkitConfig
-from meshagent.tools.tool import Tool, ToolContext
+from meshagent.tools.tool import FunctionTool, ToolContext
 from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
 from meshagent.api.room_server_client import RoomClient
 
@@ -18,7 +18,7 @@ class WebToolkit(Toolkit):
         super().__init__(name="web_fetch", tools=[WebFetchTool(user_agent=user_agent)])
 
 
-class WebFetchTool(Tool):
+class WebFetchTool(FunctionTool):
     def __init__(self, *, user_agent: Optional[str] = None):
         super().__init__(
             name="web_fetch",

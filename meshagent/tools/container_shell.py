@@ -1,5 +1,5 @@
 from meshagent.api import RoomClient
-from .tool import ToolContext, Tool
+from .tool import ToolContext, FunctionTool
 from .toolkit import Toolkit, ToolkitBuilder
 
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
@@ -56,7 +56,7 @@ class ContainerShellToolkitBuilder(ToolkitBuilder):
         )
 
 
-class ContainerShellTool(Tool):
+class ContainerShellTool(FunctionTool):
     def __init__(
         self,
         *,

@@ -10,8 +10,8 @@ from .blob import get_bytes_from_url
 
 from .tool import (
     ToolContext,
-    Tool,
-    StreamTool,
+    FunctionTool,
+    ContentTool,
     BaseTool,
     tool,
 )
@@ -56,8 +56,8 @@ __all__ = [
     TextContent,
     FileContent,
     LinkContent,
-    Tool,
-    StreamTool,
+    FunctionTool,
+    ContentTool,
     ToolContext,
     Toolkit,
     tool,

@@ -1,13 +1,13 @@
 from meshagent.api.messaging import FileContent, JsonContent, Content
 from .tool import (
-    Tool,
+    FunctionTool,
     BaseTool,
 )
 from .toolkit import Toolkit
 import asyncio
 
 
-class MultiTool(Tool):
+class MultiTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -23,10 +23,10 @@ class MultiTool(Tool):
         defs = None
         properties = {}
 
-        self._subtools = dict[str, Tool]()
+        self._subtools = dict[str, FunctionTool]()
 
         for tool in tools:
-            if isinstance(tool, Tool):
+            if isinstance(tool, FunctionTool):
                 if name is None:
                     name = tool.name
 
@@ -113,7 +113,7 @@ class MultiTool(Tool):
 
 # MultiToolkit can be used to combine multiple tools into one, this can be useful if you want to make sure that every tool call also produces a toast for example
 class MultiToolkit(Toolkit):
-    def __init__(self, *, required: list[Tool], base_toolkit: Toolkit):
+    def __init__(self, *, required: list[FunctionTool], base_toolkit: Toolkit):
         tools = list(
             map(
                 lambda tool: MultiTool(

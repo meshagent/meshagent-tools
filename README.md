@@ -13,10 +13,10 @@ A ``Tool`` encapsulates a single operation with an input JSON schema. Each tool 
 Response types specify the output that a tool should return. This helps the tool and agent know how to handle the response appropriately. Response types include: ``JsonChunk``, ``TextChunk``, and ``FileChunk``.
 
 ```Python Python
-from meshagent.tools import Tool, Toolkit, ToolContext
+from meshagent.tools import FunctionTool, Toolkit, ToolContext
 from meshagent.api.messaging import TextChunk
 
-class MyNewTool(Tool):
+class MyNewTool(FunctionTool):
     def __init__(self):
         super().__init__(
             name="my_new_tool",

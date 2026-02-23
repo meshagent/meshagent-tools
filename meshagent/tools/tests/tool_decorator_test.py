@@ -29,7 +29,9 @@ async def test_decorated_tool_executes_with_toolkit():
     result = await toolkit.execute(
         context=context,
         name="make_payload",
-        arguments={"payload": {"name": "alpha", "count": 2}, "flag": True},
+        input=JsonContent(
+            json={"payload": {"name": "alpha", "count": 2}, "flag": True}
+        ),
     )
 
     assert isinstance(result, JsonContent)
@@ -54,7 +56,7 @@ async def test_decorated_method_executes_with_toolkit():
     result = await toolkit.execute(
         context=context,
         name="greet",
-        arguments={"name": "mesh"},
+        input=JsonContent(json={"name": "mesh"}),
     )
 
     assert isinstance(result, TextContent)
@@ -62,7 +64,9 @@ async def test_decorated_method_executes_with_toolkit():
 
 
 def test_decorator_schema_is_strict():
-    schema = make_payload.input_schema
+    assert make_payload.input_spec is not None
+    schema = make_payload.input_spec.schema
+    assert schema is not None
 
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False

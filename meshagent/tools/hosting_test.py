@@ -1,9 +1,12 @@
 import asyncio
 from dataclasses import dataclass
+from collections.abc import AsyncIterable
 
 import pytest
 
 from meshagent.api.messaging import (
+    Content,
+    ErrorContent,
     JsonContent,
     TextContent,
     _ControlContent,
@@ -12,7 +15,8 @@ from meshagent.api.messaging import (
     unpack_content,
     unpack_content_parts,
 )
-from meshagent.tools import StreamTool, tool
+from meshagent.api.room_server_client import ToolContentSpec
+from meshagent.tools import ContentTool, tool
 from meshagent.tools.hosting import RemoteToolkit
 
 
@@ -51,26 +55,31 @@ class _FakeRoom:
         self.messaging = _FakeMessaging()
 
 
-class _CollectRequestChunksTool(StreamTool):
+class _CollectRequestChunksTool(ContentTool):
     def __init__(self):
         super().__init__(
             name="collect_request_chunks",
-            input_schema={
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {},
-            },
+            input_schema={"oneOf": [{"type": "object"}, {"type": "string"}]},
         )
 
     async def execute(
         self,
         *,
         context,
-        request_stream,
+        input,
     ):
         del context
 
         values: list[object] = []
+        if isinstance(input, Content):
+
+            async def single() -> AsyncIterable[Content]:
+                yield input
+
+            request_stream = single()
+        else:
+            request_stream = input
+
         async for chunk in request_stream:
             if isinstance(chunk, JsonContent):
                 values.append(chunk.json)
@@ -78,6 +87,81 @@ class _CollectRequestChunksTool(StreamTool):
                 values.append(chunk.text)
 
         return JsonContent(json={"values": values})
+
+
+class _WrongOutputTypeTool(ContentTool):
+    def __init__(self):
+        super().__init__(
+            name="wrong_output_type",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+            },
+            output_spec=ToolContentSpec(types=["json"], stream=False),
+        )
+
+    async def execute(self, *, context, input):
+        del context
+        del input
+        return TextContent(text="not-json")
+
+
+class _SchemaValidatedTextEchoTool(ContentTool):
+    def __init__(self):
+        super().__init__(
+            name="schema_validated_text_echo",
+            input_schema={"type": "string", "pattern": "^ok$"},
+            input_spec=ToolContentSpec(types=["text"], stream=False),
+        )
+
+    async def execute(self, *, context, input):
+        del context
+        if not isinstance(input, TextContent):
+            raise Exception("expected text input")
+        return JsonContent(json={"echo": input.text})
+
+
+class _CollectValidatedTextStreamTool(ContentTool):
+    def __init__(self):
+        super().__init__(
+            name="collect_validated_text_stream",
+            input_schema={"type": "string", "pattern": "^ok"},
+            input_spec=ToolContentSpec(types=["text"], stream=True),
+        )
+
+    async def execute(self, *, context, input):
+        del context
+        if isinstance(input, Content):
+            raise Exception("expected stream input")
+        values: list[str] = []
+        async for item in input:
+            if isinstance(item, TextContent):
+                values.append(item.text)
+        return JsonContent(json={"values": values})
+
+
+class _InvalidStreamOutputTool(ContentTool):
+    def __init__(self):
+        super().__init__(
+            name="invalid_stream_output",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+            },
+            output_spec=ToolContentSpec(types=["json"], stream=True),
+        )
+
+    async def execute(self, *, context, input):
+        del context
+        del input
+
+        async def stream():
+            yield JsonContent(json={"ok": 1})
+            yield TextContent(text="invalid")
+
+        return stream()
 
 
 @pytest.mark.asyncio
@@ -192,3 +276,236 @@ async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
     response = unpack_content(response_msg.data)
     assert isinstance(response, JsonContent)
     assert response.json == {"values": [{"step": 1}, "done"]}
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_allows_non_stream_content_for_content_tool() -> None:
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(
+        name="test", tools=[_CollectRequestChunksTool()], public=True
+    )
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._tool_call(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=44,
+        msg_type="agent.tool_call.test",
+        data=pack_message(
+            header={
+                "name": "collect_request_chunks",
+                "arguments": JsonContent(json={"step": 1}).to_json(),
+                "caller_id": "caller-1",
+                "tool_call_id": "tc-req-2",
+            }
+        ),
+    )
+
+    await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+
+    response_msg = room.protocol.sent[-1]
+    response = unpack_content(response_msg.data)
+    assert isinstance(response, JsonContent)
+    assert response.json == {"values": [{"step": 1}]}
+
+
+def _decode_chunk(message: _SentMessage) -> Content:
+    header, payload = unpack_message(message.data)
+    return unpack_content_parts(header=header["chunk"], payload=payload)
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_validation_rejects_unary_output_type_mismatch() -> None:
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(name="test", tools=[_WrongOutputTypeTool()], public=True)
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._tool_call(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=45,
+        msg_type="agent.tool_call.test",
+        data=pack_message(
+            header={
+                "name": "wrong_output_type",
+                "arguments": JsonContent(json={}).to_json(),
+                "caller_id": "caller-1",
+                "tool_call_id": "tc-req-3",
+            }
+        ),
+    )
+
+    await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+
+    response = unpack_content(room.protocol.sent[-1].data)
+    assert isinstance(response, ErrorContent)
+    assert "output content type 'text'" in response.text
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_validation_mode_none_skips_output_type_validation() -> (
+    None
+):
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(
+        name="test",
+        tools=[_WrongOutputTypeTool()],
+        public=True,
+        validation_mode="none",
+    )
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._tool_call(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=46,
+        msg_type="agent.tool_call.test",
+        data=pack_message(
+            header={
+                "name": "wrong_output_type",
+                "arguments": JsonContent(json={}).to_json(),
+                "caller_id": "caller-1",
+                "tool_call_id": "tc-req-4",
+            }
+        ),
+    )
+
+    await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+
+    response = unpack_content(room.protocol.sent[-1].data)
+    assert isinstance(response, TextContent)
+    assert response.text == "not-json"
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_validation_rejects_unary_input_schema_mismatch() -> None:
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(
+        name="test", tools=[_SchemaValidatedTextEchoTool()], public=True
+    )
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._tool_call(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=47,
+        msg_type="agent.tool_call.test",
+        data=pack_message(
+            header={
+                "name": "schema_validated_text_echo",
+                "arguments": TextContent(text="not-ok").to_json(),
+                "caller_id": "caller-1",
+                "tool_call_id": "tc-req-5",
+            }
+        ),
+    )
+
+    await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+
+    response = unpack_content(room.protocol.sent[-1].data)
+    assert isinstance(response, ErrorContent)
+    assert "input does not match input_schema" in response.text
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() -> None:
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(
+        name="test",
+        tools=[_CollectValidatedTextStreamTool()],
+        public=True,
+    )
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._tool_call(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=48,
+        msg_type="agent.tool_call.test",
+        data=pack_message(
+            header={
+                "name": "collect_validated_text_stream",
+                "arguments": _ControlContent(method="open").to_json(),
+                "caller_id": "caller-1",
+                "tool_call_id": "tc-req-6",
+            }
+        ),
+    )
+
+    await toolkit._tool_call_request_chunk(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=48,
+        msg_type="agent.tool_call_request_chunk.test",
+        data=pack_message(
+            header={
+                "tool_call_id": "tc-req-6",
+                "chunk": TextContent(text="ok-first").to_json(),
+            }
+        ),
+    )
+    await toolkit._tool_call_request_chunk(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=48,
+        msg_type="agent.tool_call_request_chunk.test",
+        data=pack_message(
+            header={
+                "tool_call_id": "tc-req-6",
+                "chunk": TextContent(text="invalid").to_json(),
+            }
+        ),
+    )
+    await toolkit._tool_call_request_chunk(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=48,
+        msg_type="agent.tool_call_request_chunk.test",
+        data=pack_message(
+            header={
+                "tool_call_id": "tc-req-6",
+                "chunk": _ControlContent(method="close").to_json(),
+            }
+        ),
+    )
+
+    await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+
+    response = unpack_content(room.protocol.sent[-1].data)
+    assert isinstance(response, ErrorContent)
+    assert "input does not match input_schema" in response.text
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_validation_stream_output_sends_error_and_close() -> None:
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(
+        name="test", tools=[_InvalidStreamOutputTool()], public=True
+    )
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._tool_call(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=49,
+        msg_type="agent.tool_call.test",
+        data=pack_message(
+            header={
+                "name": "invalid_stream_output",
+                "arguments": JsonContent(json={}).to_json(),
+                "caller_id": "caller-1",
+                "tool_call_id": "tc-req-7",
+            }
+        ),
+    )
+
+    await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+    await asyncio.sleep(0.05)
+
+    assert len(room.protocol.sent) == 4
+    open_response = unpack_content(room.protocol.sent[0].data)
+    assert isinstance(open_response, _ControlContent)
+    assert open_response.method == "open"
+
+    first_chunk = _decode_chunk(room.protocol.sent[1])
+    assert isinstance(first_chunk, JsonContent)
+    assert first_chunk.json == {"ok": 1}
+
+    error_chunk = _decode_chunk(room.protocol.sent[2])
+    assert isinstance(error_chunk, ErrorContent)
+    assert "output content type 'text'" in error_chunk.text
+
+    close_chunk = _decode_chunk(room.protocol.sent[3])
+    assert isinstance(close_chunk, _ControlContent)
+    assert close_chunk.method == "close"

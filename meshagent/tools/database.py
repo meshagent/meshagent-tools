@@ -1,5 +1,5 @@
 from .config import ToolkitConfig
-from .tool import Tool
+from .tool import FunctionTool
 from .toolkit import ToolContext, ToolkitBuilder
 from .hosting import RemoteToolkit, Toolkit
 from typing import Literal, Optional
@@ -10,7 +10,7 @@ import logging
 logger = logging.getLogger("database_toolkit")
 
 
-class ListTablesTool(Tool):
+class ListTablesTool(FunctionTool):
     def __init__(self):
         input_schema = {
             "type": "object",
@@ -30,7 +30,7 @@ class ListTablesTool(Tool):
         return {"tables": await context.room.database.list_tables()}
 
 
-class InsertRowsTool(Tool):
+class InsertRowsTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -70,7 +70,7 @@ class InsertRowsTool(Tool):
         )
 
 
-class DeleteRowsTool(Tool):
+class DeleteRowsTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -114,7 +114,7 @@ class DeleteRowsTool(Tool):
         return {"ok": True}
 
 
-class UpdateTool(Tool):
+class UpdateTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -182,7 +182,7 @@ class UpdateTool(Tool):
         return {"ok": True}
 
 
-class SearchTool(Tool):
+class SearchTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -255,7 +255,7 @@ class SearchTool(Tool):
         }
 
 
-class LLMSearchTool(Tool):
+class LLMSearchTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -328,7 +328,7 @@ class LLMSearchTool(Tool):
         }
 
 
-class SpawnTaskForEachRow(Tool):
+class SpawnTaskForEachRow(FunctionTool):
     def __init__(
         self,
         *,
@@ -432,7 +432,7 @@ class SpawnTaskForEachRow(Tool):
         return {f"added {len(row)} items to the queue {self.queue}"}
 
 
-class CountTool(Tool):
+class CountTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -486,7 +486,7 @@ class CountTool(Tool):
         }
 
 
-class AdvancedSearchTool(Tool):
+class AdvancedSearchTool(FunctionTool):
     def __init__(
         self,
         *,
@@ -529,7 +529,7 @@ class AdvancedSearchTool(Tool):
         }
 
 
-class AdvancedDeleteRowsTool(Tool):
+class AdvancedDeleteRowsTool(FunctionTool):
     def __init__(
         self,
         *,

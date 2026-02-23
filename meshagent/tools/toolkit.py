@@ -1,15 +1,14 @@
 from meshagent.api.room_server_client import RoomException
-from meshagent.api.messaging import Content, ensure_content
+from meshagent.api.messaging import Content, EmptyContent, JsonContent, ensure_content
 from meshagent.api import RoomClient
 from jsonschema import validate
 import logging
 
 import json
-import inspect
 
 from typing import Optional, Literal
 from meshagent.tools.config import ToolkitConfig
-from meshagent.tools.tool import ToolContext, BaseTool, Tool, StreamTool
+from meshagent.tools.tool import ToolContext, BaseTool, FunctionTool, ContentTool
 
 from opentelemetry import trace
 from collections.abc import AsyncIterable
@@ -17,18 +16,6 @@ from collections.abc import AsyncIterable
 tracer = trace.get_tracer("meshagent.tools")
 
 logger = logging.getLogger("tools")
-
-
-def _tool_accepts_attachment_argument(tool: Tool) -> bool:
-    signature = inspect.signature(tool.execute)
-    if "attachment" in signature.parameters:
-        return True
-
-    for parameter in signature.parameters.values():
-        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
-            return True
-
-    return False
 
 
 def _schema_allows_null(schema: object) -> bool:
@@ -135,51 +122,61 @@ class Toolkit(ToolkitBuilder):
         *,
         context: ToolContext,
         name: str,
-        arguments: dict,
-        attachment: Optional[bytes] = None,
-        request_stream: Optional[AsyncIterable[Content]] = None,
+        input: Content | AsyncIterable[Content],
     ):
         with tracer.start_as_current_span("toolkit.execute") as span:
-            span.set_attributes(
-                {"toolkit": self.name, "tool": name, "arguments": json.dumps(arguments)}
-            )
+            span.set_attributes({"toolkit": self.name, "tool": name})
 
             tool = self.get_tool(name)
-            if not isinstance(tool, (Tool, StreamTool)):
+            if not isinstance(tool, (FunctionTool, ContentTool)):
                 raise RoomException(
-                    "tools must extend the Tool or StreamTool class to be invokable"
+                    "tools must extend the FunctionTool or ContentTool class to be invokable"
                 )
 
-            schema = {
-                **tool.input_schema,
-            }
-            if tool.defs is not None:
-                schema["$defs"] = {**tool.defs}
-
-            normalized_arguments = _coerce_missing_nullable_required_arguments(
-                schema=schema, arguments=arguments
-            )
-
-            validate(normalized_arguments, schema)
-            if request_stream is not None:
-                if not isinstance(tool, StreamTool):
+            if isinstance(input, AsyncIterable):
+                if not isinstance(tool, ContentTool):
                     raise RoomException(f"tool '{name}' does not accept streamed input")
-                response = await tool.execute(
-                    context=context,
-                    request_stream=request_stream,
-                )
+                response = await tool.execute(context=context, input=input)
             else:
-                if not isinstance(tool, Tool):
-                    raise RoomException(f"tool '{name}' requires streamed input")
-                if attachment is not None and _tool_accepts_attachment_argument(tool):
-                    normalized_arguments = {
-                        **normalized_arguments,
-                        "attachment": attachment,
-                    }
-                response = await tool.execute(
-                    context=context,
-                    **normalized_arguments,
-                )
+                normalized_input = ensure_content(input)
+                if isinstance(tool, ContentTool):
+                    response = await tool.execute(
+                        context=context, input=normalized_input
+                    )
+                else:
+                    if not isinstance(tool, FunctionTool):
+                        raise RoomException(f"tool '{name}' requires streamed input")
+                    if isinstance(normalized_input, EmptyContent):
+                        normalized_arguments = {}
+                    elif isinstance(normalized_input, JsonContent):
+                        if not isinstance(normalized_input.json, dict):
+                            raise RoomException(
+                                f"tool '{name}' requires JSON object input"
+                            )
+                        normalized_arguments = normalized_input.json
+                    else:
+                        raise RoomException(f"tool '{name}' requires JSON object input")
+
+                    schema = tool.input_schema
+                    if schema is None:
+                        raise RoomException(
+                            f"tool '{name}' is missing required function input schema"
+                        )
+                    schema_for_validation = {**schema}
+                    if tool.defs is not None:
+                        schema_for_validation["$defs"] = {**tool.defs}
+
+                    normalized_arguments = _coerce_missing_nullable_required_arguments(
+                        schema=schema_for_validation,
+                        arguments=normalized_arguments,
+                    )
+                    validate(normalized_arguments, schema_for_validation)
+                    span.set_attribute(
+                        "arguments", json.dumps(normalized_arguments, sort_keys=True)
+                    )
+                    response = await tool.execute(
+                        context=context, **normalized_arguments
+                    )
             if isinstance(response, AsyncIterable):
                 span.set_attribute("response_type", "stream")
                 return response

@@ -1,7 +1,7 @@
-from .hosting import RemoteToolkit, ToolContext, Tool
+from .hosting import RemoteToolkit, ToolContext, FunctionTool
 
 
-class ListTools(Tool):
+class ListTools(FunctionTool):
     def __init__(self):
         super().__init__(
             name="list_tools",

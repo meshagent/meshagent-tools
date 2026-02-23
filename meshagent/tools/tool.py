@@ -1,4 +1,4 @@
-from meshagent.api.room_server_client import RoomClient
+from meshagent.api.room_server_client import RoomClient, ToolContentSpec
 from meshagent.api.participant import Participant
 import logging
 from abc import ABC
@@ -64,10 +64,16 @@ class BaseTool(ABC):
         self,
         *,
         name: str,
+        input_schema: dict | None = None,
+        input_spec: ToolContentSpec | None = None,
+        output_spec: ToolContentSpec | None = None,
+        output_schema: dict | None = None,
+        defs: Optional[dict[str, dict]] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
+        pricing: Optional[str] = None,
         supports_context: Optional[bool] = None,
     ):
         if supports_context is None:
@@ -85,80 +91,150 @@ class BaseTool(ABC):
         self.description = description
         self.rules = rules
         self.thumbnail_url = thumbnail_url
+        self.pricing = pricing
+        if input_schema is not None and not isinstance(input_schema, dict):
+            raise TypeError("input_schema must be a dict when provided")
+        if input_spec is not None and not isinstance(input_spec, ToolContentSpec):
+            raise TypeError("input_spec must be a ToolContentSpec when provided")
+        if output_spec is not None and not isinstance(output_spec, ToolContentSpec):
+            raise TypeError("output_spec must be a ToolContentSpec when provided")
+        if output_schema is not None and not isinstance(output_schema, dict):
+            raise TypeError("output_schema must be a dict when provided")
+        if defs is not None and not isinstance(defs, dict):
+            raise TypeError("defs must be a dict when provided")
+
+        resolved_input_schema = input_schema
+        if input_spec is not None:
+            if input_schema is not None:
+                if input_spec.schema is not None and input_spec.schema != input_schema:
+                    raise ValueError("input_schema conflicts with input_spec.schema")
+                input_spec = ToolContentSpec(
+                    types=[*input_spec.types],
+                    stream=input_spec.stream,
+                    schema=input_schema,
+                )
+                resolved_input_schema = input_schema
+            elif input_spec.schema is not None:
+                resolved_input_schema = input_spec.schema
+
+        resolved_output_schema = output_schema
+        if output_spec is not None:
+            if output_schema is not None:
+                if (
+                    output_spec.schema is not None
+                    and output_spec.schema != output_schema
+                ):
+                    raise ValueError("output_schema conflicts with output_spec.schema")
+                output_spec = ToolContentSpec(
+                    types=[*output_spec.types],
+                    stream=output_spec.stream,
+                    schema=output_schema,
+                )
+                resolved_output_schema = output_schema
+            elif output_spec.schema is not None:
+                resolved_output_schema = output_spec.schema
+
+        self.input_spec = input_spec
+        self.output_spec = output_spec
+        self._input_schema = resolved_input_schema
+        self._output_schema = resolved_output_schema
+        self.defs = defs
 
         self.supports_context = supports_context
 
+    @property
+    def input_schema(self) -> dict | None:
+        return self._input_schema
 
-class Tool(BaseTool):
+    @property
+    def output_schema(self) -> dict | None:
+        return self._output_schema
+
+
+class FunctionTool(BaseTool):
     def __init__(
         self,
         *,
         name: str,
         input_schema: dict,
+        output_spec: ToolContentSpec | None = None,
+        output_schema: dict | None = None,
+        defs: Optional[dict[str, dict]] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
-        defs: Optional[dict[str, dict]] = None,
+        pricing: Optional[str] = None,
         supports_context: Optional[bool] = None,
     ):
+        if not isinstance(input_schema, dict):
+            raise TypeError("input_schema must be a dict")
+
+        # FunctionTool always accepts a single JSON object as input.
+        fixed_input_spec = ToolContentSpec(
+            types=["json"],
+            stream=False,
+            schema=input_schema,
+        )
         super().__init__(
             name=name,
+            input_spec=fixed_input_spec,
+            output_spec=output_spec,
+            output_schema=output_schema,
+            defs=defs,
             title=title,
             description=description,
             rules=rules,
             thumbnail_url=thumbnail_url,
+            pricing=pricing,
             supports_context=supports_context,
         )
-
-        if not isinstance(input_schema, dict):
-            raise Exception(
-                "schema must be a dict, got: {type}".format(type=type(input_schema))
-            )
-
-        self.input_schema = input_schema
-        self.defs = defs
 
     async def execute(self, context: ToolContext, **kwargs):
         raise (Exception("Not implemented"))
 
 
-class StreamTool(BaseTool):
+class ContentTool(BaseTool):
     def __init__(
         self,
         *,
         name: str,
-        input_schema: dict,
+        input_schema: dict | None = None,
+        input_spec: ToolContentSpec | None = None,
+        output_spec: ToolContentSpec | None = None,
+        output_schema: dict | None = None,
+        defs: Optional[dict[str, dict]] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
-        defs: Optional[dict[str, dict]] = None,
+        pricing: Optional[str] = None,
         supports_context: Optional[bool] = None,
     ):
+        if input_schema is not None and not isinstance(input_schema, dict):
+            raise TypeError("input_schema must be a dict when provided")
+
         super().__init__(
             name=name,
+            input_schema=input_schema,
+            input_spec=input_spec,
+            output_spec=output_spec,
+            output_schema=output_schema,
+            defs=defs,
             title=title,
             description=description,
             rules=rules,
             thumbnail_url=thumbnail_url,
+            pricing=pricing,
             supports_context=supports_context,
         )
-
-        if not isinstance(input_schema, dict):
-            raise Exception(
-                "schema must be a dict, got: {type}".format(type=type(input_schema))
-            )
-
-        self.input_schema = input_schema
-        self.defs = defs
 
     async def execute(
         self,
         *,
         context: ToolContext,
-        request_stream: AsyncIterable[Content],
-    ):
+        input: AsyncIterable[Content] | Content,
+    ) -> AsyncIterable[Content] | Content:
         raise (Exception("Not implemented"))
 
 
@@ -205,7 +281,7 @@ def tool(
             description if description is not None else (fn.__doc__ or "").strip()
         )
 
-        class FunctionTool(Tool):
+        class DecoratedFunctionTool(FunctionTool):
             def __init__(self, bound_instance: Optional[object] = None):
                 super().__init__(
                     name=tool_name,
@@ -224,13 +300,13 @@ def tool(
                     if bound_param_name == "cls" and owner is not None:
                         if self._bound_instance is owner:
                             return self
-                        return FunctionTool(bound_instance=owner)
+                        return DecoratedFunctionTool(bound_instance=owner)
                     return self
 
                 if self._bound_instance is instance:
                     return self
 
-                return FunctionTool(bound_instance=instance)
+                return DecoratedFunctionTool(bound_instance=instance)
 
             async def execute(
                 self,
@@ -264,6 +340,6 @@ def tool(
 
                 return ensure_content(result)
 
-        return FunctionTool()
+        return DecoratedFunctionTool()
 
     return decorator
