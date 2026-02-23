@@ -6,6 +6,7 @@ import pytest
 
 from meshagent.api.messaging import (
     Content,
+    ControlCloseStatus,
     ErrorContent,
     JsonContent,
     TextContent,
@@ -469,7 +470,9 @@ async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() 
 
 
 @pytest.mark.asyncio
-async def test_remote_toolkit_validation_stream_output_sends_error_and_close() -> None:
+async def test_remote_toolkit_validation_stream_output_sends_invalid_data_close_only() -> (
+    None
+):
     room = _FakeRoom()
     toolkit = RemoteToolkit(
         name="test", tools=[_InvalidStreamOutputTool()], public=True
@@ -493,7 +496,7 @@ async def test_remote_toolkit_validation_stream_output_sends_error_and_close() -
     await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
     await asyncio.sleep(0.05)
 
-    assert len(room.protocol.sent) == 4
+    assert len(room.protocol.sent) == 3
     open_response = unpack_content(room.protocol.sent[0].data)
     assert isinstance(open_response, _ControlContent)
     assert open_response.method == "open"
@@ -502,10 +505,9 @@ async def test_remote_toolkit_validation_stream_output_sends_error_and_close() -
     assert isinstance(first_chunk, JsonContent)
     assert first_chunk.json == {"ok": 1}
 
-    error_chunk = _decode_chunk(room.protocol.sent[2])
-    assert isinstance(error_chunk, ErrorContent)
-    assert "output content type 'text'" in error_chunk.text
-
-    close_chunk = _decode_chunk(room.protocol.sent[3])
+    close_chunk = _decode_chunk(room.protocol.sent[2])
     assert isinstance(close_chunk, _ControlContent)
     assert close_chunk.method == "close"
+    assert close_chunk.status_code == ControlCloseStatus.INVALID_DATA
+    assert close_chunk.message is not None
+    assert "output content type 'text'" in close_chunk.message

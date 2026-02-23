@@ -10,6 +10,7 @@ from meshagent.api.messaging import (
     TextContent,
     FileContent,
     LinkContent,
+    ControlCloseStatus,
     _ControlContent,
     ensure_content,
     unpack_content_parts,
@@ -39,6 +40,10 @@ from jsonschema import ValidationError, validate
 
 logger = logging.getLogger("hosting")
 ValidationMode = Literal["full", "content_types", "none"]
+
+
+class InvalidToolDataException(RoomException):
+    pass
 
 
 class RemoteTool(FunctionTool):
@@ -113,13 +118,15 @@ class RemoteToolkit(Toolkit):
       - if `$defs` are declared on the tool, they are merged into schema validation.
     - Validation failures are surfaced as tool-call errors:
       - before response-stream open: unary `ErrorContent` response
-      - after response-stream open: `ErrorContent` chunk followed by stream `close`.
+      - after response-stream open: `_ControlContent(method="close", status_code=ControlCloseStatus.INVALID_DATA, message=...)`
+        without an intermediate `ErrorContent` chunk.
 
     Error/disconnect semantics:
     - Tool execution errors use the same unary/stream error path as validation.
     - Early input disconnect unblocks active request-stream readers and removes
       pending stream state for cleanup.
-    - Response streams are always terminated with `close` after post-open errors.
+    - Post-open `ErrorContent` chunks are non-terminal by default.
+    - Validation/data errors terminate the stream with non-1000 close status code.
     """
 
     def __init__(
@@ -235,7 +242,7 @@ class RemoteToolkit(Toolkit):
         if spec.stream != stream:
             expected = "streamed" if spec.stream else "single-content"
             actual = "streamed" if stream else "single-content"
-            raise RoomException(
+            raise InvalidToolDataException(
                 f"tool '{tool_name}' {direction} is {actual} but {direction}_spec requires {expected} {direction}"
             )
 
@@ -252,7 +259,7 @@ class RemoteToolkit(Toolkit):
         content_type = self._content_kind(content)
         if content_type not in spec.types:
             allowed = ", ".join(spec.types)
-            raise RoomException(
+            raise InvalidToolDataException(
                 f"tool '{tool_name}' {direction} content type '{content_type}' is not allowed by {direction}_spec ({allowed})"
             )
 
@@ -276,7 +283,7 @@ class RemoteToolkit(Toolkit):
                 schema=resolved_schema,
             )
         except ValidationError as ex:
-            raise RoomException(
+            raise InvalidToolDataException(
                 f"tool '{tool_name}' {direction} does not match {direction}_schema: {ex.message}"
             ) from ex
 
@@ -454,16 +461,18 @@ class RemoteToolkit(Toolkit):
                 )
             except Exception:
                 if not isinstance(raw_arguments, dict):
-                    raise RoomException("'arguments' must be a content header object")
+                    raise InvalidToolDataException(
+                        "'arguments' must be a content header object"
+                    )
                 if attachment not in (None, b""):
-                    raise RoomException(
+                    raise InvalidToolDataException(
                         "legacy binary attachment tool input is no longer supported; send a file content input instead"
                     )
                 input_content = JsonContent(json=raw_arguments)
 
             if isinstance(input_content, _ControlContent):
                 if input_content.method != "open":
-                    raise RoomException(
+                    raise InvalidToolDataException(
                         "request stream must start with an open control chunk"
                     )
                 request_stream = True
@@ -629,12 +638,12 @@ class RemoteToolkit(Toolkit):
                             args = {}
                         elif isinstance(input_content, JsonContent):
                             if not isinstance(input_content.json, dict):
-                                raise RoomException(
+                                raise InvalidToolDataException(
                                     "non-stream function tool input json chunk must contain an object"
                                 )
                             args = input_content.json
                         else:
-                            raise RoomException(
+                            raise InvalidToolDataException(
                                 f"tool '{name}' requires JSON object input"
                             )
                         # FunctionTool schemas are validated by Toolkit.execute against kwargs.
@@ -686,9 +695,21 @@ class RemoteToolkit(Toolkit):
             except Exception as e:
                 logger.error("tool call failed", exc_info=e)
                 if response_sent:
-                    chunk_queue.put_nowait(ErrorContent(text=f"{e}"))
-                    if not stream_close_emitted:
-                        chunk_queue.put_nowait(_ControlContent(method="close"))
+                    if isinstance(e, InvalidToolDataException):
+                        if not stream_close_emitted:
+                            chunk_queue.put_nowait(
+                                _ControlContent(
+                                    method="close",
+                                    status_code=ControlCloseStatus.INVALID_DATA,
+                                    message=str(e),
+                                )
+                            )
+                            stream_close_emitted = True
+                    else:
+                        chunk_queue.put_nowait(ErrorContent(text=f"{e}"))
+                        if not stream_close_emitted:
+                            chunk_queue.put_nowait(_ControlContent(method="close"))
+                            stream_close_emitted = True
                 else:
                     response = ErrorContent(text=f"{e}")
             finally:
