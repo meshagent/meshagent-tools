@@ -41,6 +41,11 @@ from .container_shell import (
 )
 
 from .script import ScriptTool, ScriptToolConfig, ScriptToolkitBuilder
+from .memories import (
+    MemoriesToolkit,
+    MemoriesToolkitConfig,
+    MemoriesToolkitBuilder,
+)
 
 from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
 from meshagent.api.websocket_protocol import WebSocketClientProtocol
@@ -82,5 +87,8 @@ __all__ = [
     ScriptTool,
     ScriptToolConfig,
     ScriptToolkitBuilder,
+    MemoriesToolkit,
+    MemoriesToolkitConfig,
+    MemoriesToolkitBuilder,
     __version__,
 ]
