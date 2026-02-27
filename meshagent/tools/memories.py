@@ -94,6 +94,20 @@ class _MemoriesTool(FunctionTool):
             return None
         return [*self.namespace]
 
+    async def _ensure_memory_location(self, context: ToolContext) -> None:
+        try:
+            await context.room.memory.create(
+                name=self.memory_name,
+                namespace=self._memory_namespace(),
+                overwrite=False,
+                ignore_exists=True,
+            )
+        except RoomException as ex:
+            message = str(ex).lower()
+            if "you do not have permission to perform the requested action" in message:
+                return
+            raise
+
     @staticmethod
     def _build_entity_query_statement(
         *,
@@ -170,6 +184,8 @@ class _MemoriesTool(FunctionTool):
         if limit < 1:
             raise ValueError("limit must be >= 1")
 
+        await self._ensure_memory_location(context)
+
         statement = self._build_entity_query_statement(
             where_clause=where_clause,
             limit=limit,
@@ -198,6 +214,8 @@ class _MemoriesTool(FunctionTool):
     ) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError("limit must be >= 1")
+
+        await self._ensure_memory_location(context)
 
         statement = self._build_relationship_query_statement(
             where_clause=where_clause,
@@ -255,6 +273,7 @@ class AddMemoryTool(_MemoriesTool):
         *,
         memory: str,
     ):
+        await self._ensure_memory_location(context)
         ingest_result = await context.room.memory.ingest_text(
             name=self.memory_name,
             namespace=self._memory_namespace(),
@@ -316,6 +335,7 @@ class SearchMemoriesTool(_MemoriesTool):
         query: str,
         entity_type: Optional[str] = None,
     ):
+        await self._ensure_memory_location(context)
         if query.strip() == "":
             return {"query": query, "memories": []}
 
@@ -380,6 +400,8 @@ class GetRecentMemoriesTool(_MemoriesTool):
     ):
         if limit is None:
             limit = 50
+
+        await self._ensure_memory_location(context)
 
         where_clause = None
         if isinstance(entity_type, str) and entity_type.strip() != "":
@@ -586,6 +608,7 @@ class DeleteEntityTool(_MemoriesTool):
         )
 
     async def execute(self, context: ToolContext, *, entity_id: str):
+        await self._ensure_memory_location(context)
         result = await context.room.memory.delete_entities(
             name=self.memory_name,
             namespace=self._memory_namespace(),
@@ -636,6 +659,7 @@ class DeleteRelationshipTool(_MemoriesTool):
         target_entity_id: str,
         relationship_type: Optional[str] = None,
     ):
+        await self._ensure_memory_location(context)
         normalized_relationship_type = (
             relationship_type.strip()
             if isinstance(relationship_type, str) and relationship_type.strip() != ""
@@ -723,6 +747,7 @@ class DeleteEntitiesTool(_MemoriesTool):
         )
 
     async def execute(self, context: ToolContext, *, entity_ids: list[str]):
+        await self._ensure_memory_location(context)
         result = await context.room.memory.delete_entities(
             name=self.memory_name,
             namespace=self._memory_namespace(),

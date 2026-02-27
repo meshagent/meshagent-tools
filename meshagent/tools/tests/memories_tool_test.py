@@ -13,6 +13,7 @@ from meshagent.api.room_server_client import (
     MemoryRecallRelationship,
     MemoryRecallResult,
     MemoryRelationshipSelector,
+    RoomException,
 )
 from meshagent.tools import ToolContext
 from meshagent.tools.memories import MemoriesToolkit
@@ -29,6 +30,7 @@ class _FakeMemoryClient:
         self.drop_calls: list[dict[str, Any]] = []
         self.create_calls: list[dict[str, Any]] = []
         self.next_query_results: list[list[dict[str, Any]]] = []
+        self.create_exception: Optional[Exception] = None
 
     async def upsert_nodes(
         self,
@@ -206,12 +208,16 @@ class _FakeMemoryClient:
         name: str,
         namespace: Optional[list[str]] = None,
         overwrite: bool = False,
+        ignore_exists: bool = False,
     ) -> None:
+        if self.create_exception is not None:
+            raise self.create_exception
         self.create_calls.append(
             {
                 "name": name,
                 "namespace": namespace,
                 "overwrite": overwrite,
+                "ignore_exists": ignore_exists,
             }
         )
 
@@ -291,6 +297,49 @@ async def test_add_memory_uses_llm_ingest_text() -> None:
     assert call["llm_model"] == "gpt-5.2"
     assert call["llm_temperature"] == 0.2
     assert len(room.memory.recall_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_search_memories_creates_memory_store_when_missing() -> None:
+    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
+    room = _FakeRoom()
+    context = ToolContext(room=room, caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="search_memories",
+        input=JsonContent(json={"query": "Alice"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert room.memory.create_calls == [
+        {
+            "name": "graph",
+            "namespace": ["team"],
+            "overwrite": False,
+            "ignore_exists": True,
+        }
+    ]
+    assert len(room.memory.recall_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_memories_ignores_create_permission_error() -> None:
+    toolkit = MemoriesToolkit(memory_name="graph")
+    room = _FakeRoom()
+    room.memory.create_exception = RoomException(
+        "you do not have permission to perform the requested action"
+    )
+    context = ToolContext(room=room, caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="search_memories",
+        input=JsonContent(json={"query": "Alice"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert len(room.memory.recall_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -587,5 +636,10 @@ async def test_delete_all_memories_requires_confirm_and_recreates() -> None:
         {"name": "graph", "namespace": ["team"], "ignore_missing": True}
     ]
     assert room.memory.create_calls == [
-        {"name": "graph", "namespace": ["team"], "overwrite": True}
+        {
+            "name": "graph",
+            "namespace": ["team"],
+            "overwrite": True,
+            "ignore_exists": False,
+        }
     ]
