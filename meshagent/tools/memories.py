@@ -32,9 +32,27 @@ def _entity_from_entity_row(row: dict[str, Any]) -> dict[str, Any]:
         "entity_type": row.get("entity_type"),
         "memory": row.get("memory"),
         "confidence": row.get("confidence"),
+        "created_at": row.get("created_at"),
+        "valid_at": row.get("valid_at"),
     }
 
     return out
+
+
+def _relationship_from_relationship_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_entity_id": row.get("source_entity_id"),
+        "target_entity_id": row.get("target_entity_id"),
+        "source_entity_name": row.get("source_entity_name"),
+        "target_entity_name": row.get("target_entity_name"),
+        "relationship_type": row.get("relationship_type"),
+        "description": row.get("description"),
+        "confidence": row.get("confidence"),
+        "created_at": row.get("created_at"),
+        "valid_at": row.get("valid_at"),
+        "expired_at": row.get("expired_at"),
+        "invalid_at": row.get("invalid_at"),
+    }
 
 
 def _entity_from_recall_item(item: MemoryRecallItem) -> dict[str, Any]:
@@ -44,6 +62,8 @@ def _entity_from_recall_item(item: MemoryRecallItem) -> dict[str, Any]:
         "entity_type": item.entity_type,
         "memory": item.context,
         "confidence": item.confidence,
+        "created_at": item.created_at,
+        "valid_at": item.valid_at,
         "score": item.score,
         "relationships": [*(rel.model_dump(mode="json") for rel in item.relationships)],
     }
@@ -93,6 +113,53 @@ class _MemoriesTool(FunctionTool):
             f"LIMIT {limit}"
         )
 
+    @staticmethod
+    def _build_recent_entity_query_statement(
+        *,
+        where_clause: Optional[str],
+        limit: int,
+    ) -> str:
+        statement = "MATCH (e:Entity) "
+        if where_clause is not None and where_clause.strip() != "":
+            statement = f"{statement}WHERE {where_clause.strip()} "
+        return (
+            f"{statement}RETURN e.entity_id as entity_id, "
+            "e.name as name, "
+            "e.entity_type as entity_type, "
+            "e.context as memory, "
+            "e.confidence as confidence, "
+            "e.created_at as created_at, "
+            "e.valid_at as valid_at "
+            "ORDER BY e.valid_at DESC, e.created_at DESC, e.name "
+            f"LIMIT {limit}"
+        )
+
+    @staticmethod
+    def _build_relationship_query_statement(
+        *,
+        where_clause: Optional[str],
+        limit: int,
+    ) -> str:
+        statement = "MATCH (r:RELATIONSHIP) "
+        if where_clause is not None and where_clause.strip() != "":
+            statement = f"{statement}WHERE {where_clause.strip()} "
+        return (
+            f"{statement}RETURN r.source_entity_id as source_entity_id, "
+            "r.target_entity_id as target_entity_id, "
+            "r.source_entity_name as source_entity_name, "
+            "r.target_entity_name as target_entity_name, "
+            "r.relationship_type as relationship_type, "
+            "r.description as description, "
+            "r.confidence as confidence, "
+            "r.created_at as created_at, "
+            "r.valid_at as valid_at, "
+            "r.expired_at as expired_at, "
+            "r.invalid_at as invalid_at "
+            "ORDER BY r.valid_at DESC, r.created_at DESC, "
+            "r.relationship_type "
+            f"LIMIT {limit}"
+        )
+
     async def _query_entities(
         self,
         context: ToolContext,
@@ -117,6 +184,35 @@ class _MemoriesTool(FunctionTool):
             message = str(ex).lower()
             if (
                 "dataset 'entity' not found" in message
+                or "table has no data" in message
+            ):
+                return []
+            raise
+
+    async def _query_relationships(
+        self,
+        context: ToolContext,
+        *,
+        where_clause: Optional[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        statement = self._build_relationship_query_statement(
+            where_clause=where_clause,
+            limit=limit,
+        )
+        try:
+            return await context.room.memory.query(
+                name=self.memory_name,
+                namespace=self._memory_namespace(),
+                statement=statement,
+            )
+        except RoomException as ex:
+            message = str(ex).lower()
+            if (
+                "dataset 'relationship' not found" in message
                 or "table has no data" in message
             ):
                 return []
@@ -246,6 +342,141 @@ class SearchMemoriesTool(_MemoriesTool):
             memories.append(_entity_from_recall_item(item))
 
         return {"query": query, "memories": memories}
+
+
+class GetRecentMemoriesTool(_MemoriesTool):
+    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+        super().__init__(
+            memory_name=memory_name,
+            namespace=namespace,
+            name="get_recent_memories",
+            title="get recent memories",
+            description="List most recent memory entities by valid_at/created_at.",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "additionalProperties": False,
+                "properties": {
+                    "limit": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "description": "Max number of results.",
+                    },
+                    "entity_type": {
+                        "type": ["string", "null"],
+                        "description": "Optional entity_type filter.",
+                    },
+                },
+            },
+        )
+
+    async def execute(
+        self,
+        context: ToolContext,
+        *,
+        limit: Optional[int] = 50,
+        entity_type: Optional[str] = None,
+    ):
+        if limit is None:
+            limit = 50
+
+        where_clause = None
+        if isinstance(entity_type, str) and entity_type.strip() != "":
+            escaped = _escape_query_value(entity_type.strip())
+            where_clause = f"e.entity_type = '{escaped}'"
+
+        statement = self._build_recent_entity_query_statement(
+            where_clause=where_clause,
+            limit=limit,
+        )
+        try:
+            rows = await context.room.memory.query(
+                name=self.memory_name,
+                namespace=self._memory_namespace(),
+                statement=statement,
+            )
+        except RoomException as ex:
+            message = str(ex).lower()
+            if (
+                "dataset 'entity' not found" in message
+                or "table has no data" in message
+            ):
+                rows = []
+            else:
+                raise
+        return {"memories": [*(_entity_from_entity_row(row) for row in rows)]}
+
+
+class GetRecentRelationshipsTool(_MemoriesTool):
+    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+        super().__init__(
+            memory_name=memory_name,
+            namespace=namespace,
+            name="get_recent_relationships",
+            title="get recent relationships",
+            description=(
+                "List most recent relationship edges by valid_at/created_at, "
+                "with optional filters."
+            ),
+            input_schema={
+                "type": "object",
+                "required": [],
+                "additionalProperties": False,
+                "properties": {
+                    "limit": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "description": "Max number of relationships.",
+                    },
+                    "entity_id": {
+                        "type": ["string", "null"],
+                        "description": "Optional entity_id filter (source or target).",
+                    },
+                    "relationship_type": {
+                        "type": ["string", "null"],
+                        "description": "Optional relationship_type filter.",
+                    },
+                },
+            },
+        )
+
+    async def execute(
+        self,
+        context: ToolContext,
+        *,
+        limit: Optional[int] = 50,
+        entity_id: Optional[str] = None,
+        relationship_type: Optional[str] = None,
+    ):
+        if limit is None:
+            limit = 50
+
+        where_clauses = list[str]()
+        if isinstance(entity_id, str) and entity_id.strip() != "":
+            escaped_entity_id = _escape_query_value(entity_id.strip())
+            where_clauses.append(
+                "("
+                f"r.source_entity_id = '{escaped_entity_id}' OR "
+                f"r.target_entity_id = '{escaped_entity_id}'"
+                ")"
+            )
+        if isinstance(relationship_type, str) and relationship_type.strip() != "":
+            escaped_relationship_type = _escape_query_value(relationship_type.strip())
+            where_clauses.append(f"r.relationship_type = '{escaped_relationship_type}'")
+
+        where_clause = " AND ".join(where_clauses) if len(where_clauses) > 0 else None
+        rows = await self._query_relationships(
+            context=context,
+            where_clause=where_clause,
+            limit=limit,
+        )
+        return {
+            "relationships": [
+                *(_relationship_from_relationship_row(row) for row in rows)
+            ]
+        }
 
 
 class GetMemoriesTool(_MemoriesTool):
@@ -581,6 +812,10 @@ class MemoriesToolkit(RemoteToolkit):
                     memory_name=memory_name,
                     namespace=namespace,
                     recall_limit=search_limit,
+                ),
+                GetRecentMemoriesTool(memory_name=memory_name, namespace=namespace),
+                GetRecentRelationshipsTool(
+                    memory_name=memory_name, namespace=namespace
                 ),
                 GetEntityTool(memory_name=memory_name, namespace=namespace),
                 DeleteEntityTool(memory_name=memory_name, namespace=namespace),

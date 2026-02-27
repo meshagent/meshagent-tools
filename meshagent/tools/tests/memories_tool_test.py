@@ -100,6 +100,8 @@ class _FakeMemoryClient:
                     name="Memory 1",
                     entity_type="MEMORY",
                     context="Alice likes tea",
+                    created_at="2026-01-01T00:00:00Z",
+                    valid_at="2026-01-02T00:00:00Z",
                     score=2.0,
                     relationships=[
                         MemoryRecallRelationship(
@@ -107,6 +109,10 @@ class _FakeMemoryClient:
                             target_entity_id="person-1",
                             relationship_type="ABOUT",
                             description="About Alice",
+                            created_at="2026-01-03T00:00:00Z",
+                            valid_at="2026-01-04T00:00:00Z",
+                            expired_at="2026-02-01T00:00:00Z",
+                            invalid_at="2026-02-02T00:00:00Z",
                         )
                     ],
                 ),
@@ -115,6 +121,8 @@ class _FakeMemoryClient:
                     name="Alice",
                     entity_type="PERSON",
                     context="Alice person node",
+                    created_at="2026-01-01T00:00:01Z",
+                    valid_at="2026-01-02T00:00:01Z",
                     score=1.5,
                 ),
             ],
@@ -225,6 +233,12 @@ def test_memories_tool_schemas_remain_strict_for_openai() -> None:
         "query",
         "entity_type",
     }
+    assert required_by_tool["get_recent_memories"] == {"limit", "entity_type"}
+    assert required_by_tool["get_recent_relationships"] == {
+        "limit",
+        "entity_id",
+        "relationship_type",
+    }
     assert required_by_tool["get_entity"] == {"entity_id"}
     assert required_by_tool["delete_entity"] == {"entity_id"}
     assert required_by_tool["delete_relationship"] == {
@@ -236,6 +250,8 @@ def test_memories_tool_schemas_remain_strict_for_openai() -> None:
     assert set(required_by_tool.keys()) == {
         "add_memory",
         "search_memories",
+        "get_recent_memories",
+        "get_recent_relationships",
         "get_entity",
         "delete_entity",
         "delete_relationship",
@@ -293,6 +309,14 @@ async def test_search_memories_uses_recall_like_ask_button() -> None:
     assert result.json["query"] == "Alice"
     assert len(result.json["memories"]) == 2
     assert result.json["memories"][0]["entity_id"] == "memory-1"
+    assert result.json["memories"][0]["created_at"] == "2026-01-01T00:00:00Z"
+    assert result.json["memories"][0]["valid_at"] == "2026-01-02T00:00:00Z"
+    assert result.json["memories"][0]["relationships"][0]["created_at"] == (
+        "2026-01-03T00:00:00Z"
+    )
+    assert result.json["memories"][0]["relationships"][0]["expired_at"] == (
+        "2026-02-01T00:00:00Z"
+    )
     assert len(room.memory.recall_calls) == 1
     recall_call = room.memory.recall_calls[0]
     assert recall_call["name"] == "graph"
@@ -320,6 +344,112 @@ async def test_search_memories_uses_custom_toolkit_search_limit() -> None:
     recall_call = room.memory.recall_calls[0]
     assert recall_call["limit"] == 7
     assert recall_call["include_relationships"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_recent_memories_uses_temporal_sorting() -> None:
+    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
+    room = _FakeRoom()
+    room.memory.next_query_results = [
+        [
+            {
+                "entity_id": "memory-1",
+                "name": "Memory 1",
+                "entity_type": "MEMORY",
+                "memory": "Alice likes tea",
+                "confidence": 0.9,
+                "created_at": "2026-01-01T00:00:00Z",
+                "valid_at": "2026-01-02T00:00:00Z",
+            }
+        ]
+    ]
+    context = ToolContext(room=room, caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="get_recent_memories",
+        input=JsonContent(json={"limit": 10, "entity_type": "MEMORY"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json["memories"] == [
+        {
+            "entity_id": "memory-1",
+            "name": "Memory 1",
+            "entity_type": "MEMORY",
+            "memory": "Alice likes tea",
+            "confidence": 0.9,
+            "created_at": "2026-01-01T00:00:00Z",
+            "valid_at": "2026-01-02T00:00:00Z",
+        }
+    ]
+    assert len(room.memory.query_calls) == 1
+    statement = room.memory.query_calls[0]["statement"]
+    assert "ORDER BY e.valid_at DESC, e.created_at DESC, e.name" in statement
+    assert "WHERE e.entity_type = 'MEMORY'" in statement
+    assert room.memory.query_calls[0]["namespace"] == ["team"]
+
+
+@pytest.mark.asyncio
+async def test_get_recent_relationships_uses_temporal_sorting_and_filters() -> None:
+    toolkit = MemoriesToolkit(memory_name="graph")
+    room = _FakeRoom()
+    room.memory.next_query_results = [
+        [
+            {
+                "source_entity_id": "memory-1",
+                "target_entity_id": "person-1",
+                "source_entity_name": "Memory 1",
+                "target_entity_name": "Alice",
+                "relationship_type": "ABOUT",
+                "description": "About Alice",
+                "confidence": 0.8,
+                "created_at": "2026-01-03T00:00:00Z",
+                "valid_at": "2026-01-04T00:00:00Z",
+                "expired_at": "2026-02-01T00:00:00Z",
+                "invalid_at": "2026-02-02T00:00:00Z",
+            }
+        ]
+    ]
+    context = ToolContext(room=room, caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="get_recent_relationships",
+        input=JsonContent(
+            json={
+                "limit": 10,
+                "entity_id": "memory-1",
+                "relationship_type": "ABOUT",
+            }
+        ),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json["relationships"] == [
+        {
+            "source_entity_id": "memory-1",
+            "target_entity_id": "person-1",
+            "source_entity_name": "Memory 1",
+            "target_entity_name": "Alice",
+            "relationship_type": "ABOUT",
+            "description": "About Alice",
+            "confidence": 0.8,
+            "created_at": "2026-01-03T00:00:00Z",
+            "valid_at": "2026-01-04T00:00:00Z",
+            "expired_at": "2026-02-01T00:00:00Z",
+            "invalid_at": "2026-02-02T00:00:00Z",
+        }
+    ]
+    assert len(room.memory.query_calls) == 1
+    statement = room.memory.query_calls[0]["statement"]
+    assert (
+        "WHERE (r.source_entity_id = 'memory-1' OR r.target_entity_id = 'memory-1') "
+        "AND r.relationship_type = 'ABOUT'"
+    ) in statement
+    assert (
+        "ORDER BY r.valid_at DESC, r.created_at DESC, r.relationship_type" in statement
+    )
 
 
 @pytest.mark.asyncio
