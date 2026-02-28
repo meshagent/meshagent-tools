@@ -426,27 +426,13 @@ class RemoteToolkit(Toolkit):
 
         self._enqueue_request_stream_chunk(queue=queue, chunk=chunk)
 
-    def _mangle(self, name: str):
-        if self.public:
-            return name
-        else:
-            n = self.room.local_participant.get_attribute("name")
-            return f"{n}_{name}"
-
-    def _unmangle(self, name: str):
-        if self.public:
-            return name
-        else:
-            n = self.room.local_participant.get_attribute("name")
-            return name.removeprefix(f"{n}_")
-
     async def _tool_call(
         self, protocol: Protocol, message_id: int, msg_type: str, data: bytes
     ):
         async def do_call():
             # Decode and parse the message
             message, attachment = unpack_message(data)
-            name = self._unmangle(message["name"])
+            name = message["name"]
             raw_arguments = message["arguments"]
             caller_id = message["caller_id"]
             caller_context = message.get("caller_context", None)
@@ -744,7 +730,7 @@ class RemoteToolkit(Toolkit):
                     f"tool '{tool.name}' must extend FunctionTool or ContentTool"
                 )
 
-            children[self._mangle(tool.name)] = {
+            children[tool.name] = {
                 "title": tool.title,
                 "description": tool.description,
                 "input_spec": None
