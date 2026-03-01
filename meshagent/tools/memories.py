@@ -1,5 +1,6 @@
 from typing import Any, Literal, Optional
 
+from meshagent.api import ErrorCode
 from meshagent.api.room_server_client import (
     MemoryRelationshipSelector,
     MemoryRecallItem,
@@ -94,6 +95,21 @@ class _MemoriesTool(FunctionTool):
             return None
         return [*self.namespace]
 
+    @staticmethod
+    def _is_permission_denied_error(error: RoomException) -> bool:
+        if error.code == ErrorCode.PERMISSION_DENIED:
+            return True
+        return (
+            "you do not have permission to perform the requested action"
+            in str(error).lower()
+        )
+
+    @staticmethod
+    def _is_memory_not_found_error(error: RoomException) -> bool:
+        if error.code == ErrorCode.MEMORY_NOT_FOUND:
+            return True
+        return "memory does not exist:" in str(error).lower()
+
     async def _ensure_memory_location(self, context: ToolContext) -> None:
         try:
             await context.room.memory.create(
@@ -103,8 +119,7 @@ class _MemoriesTool(FunctionTool):
                 ignore_exists=True,
             )
         except RoomException as ex:
-            message = str(ex).lower()
-            if "you do not have permission to perform the requested action" in message:
+            if self._is_permission_denied_error(ex):
                 return
             raise
 
@@ -339,13 +354,18 @@ class SearchMemoriesTool(_MemoriesTool):
         if query.strip() == "":
             return {"query": query, "memories": []}
 
-        result = await context.room.memory.recall(
-            name=self.memory_name,
-            namespace=self._memory_namespace(),
-            query=query,
-            limit=self._recall_limit,
-            include_relationships=True,
-        )
+        try:
+            result = await context.room.memory.recall(
+                name=self.memory_name,
+                namespace=self._memory_namespace(),
+                query=query,
+                limit=self._recall_limit,
+                include_relationships=True,
+            )
+        except RoomException as ex:
+            if self._is_memory_not_found_error(ex):
+                return {"query": query, "memories": [], "message": "no memories yet"}
+            raise
 
         memories = list[dict[str, Any]]()
         normalized_entity_type = (

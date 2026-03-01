@@ -2,6 +2,7 @@ from typing import Any, Optional
 
 import pytest
 
+from meshagent.api import ErrorCode
 from meshagent.api.messaging import JsonContent
 from meshagent.api.room_server_client import (
     MemoryDeleteEntitiesResult,
@@ -31,6 +32,7 @@ class _FakeMemoryClient:
         self.create_calls: list[dict[str, Any]] = []
         self.next_query_results: list[list[dict[str, Any]]] = []
         self.create_exception: Optional[Exception] = None
+        self.recall_exception: Optional[Exception] = None
 
     async def upsert_nodes(
         self,
@@ -84,6 +86,8 @@ class _FakeMemoryClient:
         limit: int = 5,
         include_relationships: bool = True,
     ) -> MemoryRecallResult:
+        if self.recall_exception is not None:
+            raise self.recall_exception
         self.recall_calls.append(
             {
                 "name": name,
@@ -328,7 +332,8 @@ async def test_search_memories_ignores_create_permission_error() -> None:
     toolkit = MemoriesToolkit(memory_name="graph")
     room = _FakeRoom()
     room.memory.create_exception = RoomException(
-        "you do not have permission to perform the requested action"
+        "you do not have permission to perform the requested action",
+        code=ErrorCode.PERMISSION_DENIED,
     )
     context = ToolContext(room=room, caller=object())
 
@@ -340,6 +345,30 @@ async def test_search_memories_ignores_create_permission_error() -> None:
 
     assert isinstance(result, JsonContent)
     assert len(room.memory.recall_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_memories_returns_no_memories_yet_when_missing() -> None:
+    toolkit = MemoriesToolkit(memory_name="graph")
+    room = _FakeRoom()
+    room.memory.recall_exception = RoomException(
+        "memory does not exist: graph",
+        code=ErrorCode.MEMORY_NOT_FOUND,
+    )
+    context = ToolContext(room=room, caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="search_memories",
+        input=JsonContent(json={"query": "Alice"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "query": "Alice",
+        "memories": [],
+        "message": "no memories yet",
+    }
 
 
 @pytest.mark.asyncio
