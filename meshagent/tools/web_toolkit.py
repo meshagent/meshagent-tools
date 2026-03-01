@@ -6,20 +6,47 @@ import os
 from urllib.parse import urlparse
 from typing import Optional
 from meshagent.api.http import new_client_session
-from meshagent.api.messaging import FileContent, JsonContent, Content, TextContent
+from meshagent.api.messaging import FileContent, Content, TextContent
 from meshagent.tools.config import ToolkitConfig
 from meshagent.tools.tool import FunctionTool, ToolContext
 from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
 from meshagent.api.room_server_client import RoomClient
+from ._text_utils import (
+    DEFAULT_TOOL_MAX_LENGTH,
+    grep_text,
+    normalize_context_lines,
+    normalize_offset,
+    truncate_text,
+    validate_max_length,
+)
 
 
 class WebToolkit(Toolkit):
-    def __init__(self, *, user_agent: Optional[str] = None):
-        super().__init__(name="web_fetch", tools=[WebFetchTool(user_agent=user_agent)])
+    def __init__(
+        self,
+        *,
+        user_agent: Optional[str] = None,
+        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
+    ):
+        validated_max_length = validate_max_length(
+            max_length=max_length, tool_name="web_fetch"
+        )
+        super().__init__(
+            name="web_fetch",
+            tools=[
+                WebFetchTool(user_agent=user_agent, max_length=validated_max_length),
+                WebGrepTool(user_agent=user_agent, max_length=validated_max_length),
+            ],
+        )
 
 
 class WebFetchTool(FunctionTool):
-    def __init__(self, *, user_agent: Optional[str] = None):
+    def __init__(
+        self,
+        *,
+        user_agent: Optional[str] = None,
+        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
+    ):
         super().__init__(
             name="web_fetch",
             title="web fetch",
@@ -30,18 +57,27 @@ class WebFetchTool(FunctionTool):
                     "url": {
                         "type": "string",
                         "description": "the url of the web page (always start it with a proper scheme like https://)",
-                    }
+                    },
+                    "offset": {
+                        "type": ["integer", "null"],
+                        "description": "optional character offset into the fetched text output",
+                    },
                 },
-                "required": ["url"],
+                "required": ["url", "offset"],
                 "additionalProperties": False,
             },
         )
         self.user_agent = user_agent
+        self.max_length = validate_max_length(
+            max_length=max_length, tool_name="web_fetch"
+        )
 
     async def execute(self, context: ToolContext, **kwargs: object) -> Content:
         url = str(kwargs.get("url", ""))
         if not url:
             raise ValueError("url is required")
+        offset = normalize_offset(value=kwargs.get("offset"))
+
         async with new_client_session() as session:
             async with session.get(
                 url,
@@ -60,11 +96,21 @@ class WebFetchTool(FunctionTool):
                     try:
                         parsed = json.loads(text)
                     except json.JSONDecodeError:
-                        return TextContent(text=text)
+                        return TextContent(
+                            text=truncate_text(
+                                text=text,
+                                offset=offset,
+                                max_length=self.max_length,
+                            )
+                        )
 
-                    if isinstance(parsed, dict):
-                        return JsonContent(json=parsed)
-                    return JsonContent(json={"data": parsed})
+                    return TextContent(
+                        text=truncate_text(
+                            text=json.dumps(parsed, ensure_ascii=False, indent=2),
+                            offset=offset,
+                            max_length=self.max_length,
+                        )
+                    )
 
                 if _is_text_content_type(content_type):
                     text = _decode_text(data=data, charset=resp.charset)
@@ -72,7 +118,13 @@ class WebFetchTool(FunctionTool):
                         from html_to_markdown import convert
 
                         text = convert(text)
-                    return TextContent(text=text)
+                    return TextContent(
+                        text=truncate_text(
+                            text=text,
+                            offset=offset,
+                            max_length=self.max_length,
+                        )
+                    )
 
                 if _is_file_content_type(content_type):
                     filename = _infer_filename(url=url, content_type=content_type)
@@ -87,6 +139,112 @@ class WebFetchTool(FunctionTool):
                     name=filename,
                     mime_type=content_type or "application/octet-stream",
                     data=data,
+                )
+
+
+class WebGrepTool(FunctionTool):
+    def __init__(
+        self,
+        *,
+        user_agent: Optional[str] = None,
+        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
+    ):
+        super().__init__(
+            name="web_grep",
+            title="web grep",
+            description="fetches a url and searches its text output using a regular expression pattern. PDFs and images are not supported; use web_fetch instead.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "the url of the web page (always start it with a proper scheme like https://)",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "regular expression pattern used to match fetched lines",
+                    },
+                    "offset": {
+                        "type": ["integer", "null"],
+                        "description": "optional character offset into the fetched text output",
+                    },
+                    "before": {
+                        "type": ["integer", "null"],
+                        "description": "optional number of context lines to include before each match",
+                    },
+                    "after": {
+                        "type": ["integer", "null"],
+                        "description": "optional number of context lines to include after each match",
+                    },
+                },
+                "required": ["url", "pattern", "offset", "before", "after"],
+                "additionalProperties": False,
+            },
+        )
+        self.user_agent = user_agent
+        self.max_length = validate_max_length(
+            max_length=max_length, tool_name="web_grep"
+        )
+
+    async def execute(self, context: ToolContext, **kwargs: object) -> Content:
+        url = str(kwargs.get("url", ""))
+        pattern = str(kwargs.get("pattern", ""))
+        if not url:
+            raise ValueError("url is required")
+        offset = normalize_offset(value=kwargs.get("offset"))
+        before = normalize_context_lines(
+            value=kwargs.get("before"), parameter_name="before"
+        )
+        after = normalize_context_lines(
+            value=kwargs.get("after"), parameter_name="after"
+        )
+
+        async with new_client_session() as session:
+            async with session.get(
+                url,
+                headers={
+                    "User-Agent": self.user_agent or "Meshagent",
+                },
+            ) as resp:
+                if resp.status >= 400:
+                    raise Exception(f"web fetch failed with status {resp.status}")
+
+                content_type = (resp.content_type or "").lower()
+                data = await resp.read()
+                if _is_file_content_type(content_type):
+                    return TextContent(
+                        text="web_grep does not support PDFs or images. Use web_fetch instead."
+                    )
+                text = _decode_text(data=data, charset=resp.charset)
+                if content_type == "text/html":
+                    from html_to_markdown import convert
+
+                    text = convert(text)
+                elif _is_json_content_type(content_type):
+                    try:
+                        text = json.dumps(
+                            json.loads(text), ensure_ascii=False, indent=2
+                        )
+                    except json.JSONDecodeError:
+                        pass
+
+                if offset >= len(text):
+                    return TextContent(text="No matches found.")
+
+                line_offset = text.count("\n", 0, offset)
+                matches = grep_text(
+                    text=text[offset:],
+                    pattern=pattern,
+                    start_line=line_offset + 1,
+                    before=before,
+                    after=after,
+                )
+                return TextContent(
+                    text=truncate_text(
+                        text=matches,
+                        offset=0,
+                        max_length=self.max_length,
+                    )
                 )
 
 
@@ -130,6 +288,7 @@ def _infer_filename(*, url: str, content_type: str) -> str:
 class WebFetchConfig(ToolkitConfig):
     name: str = "web_fetch"
     user_agent: str = "Meshagent"
+    max_length: int = DEFAULT_TOOL_MAX_LENGTH
 
 
 class WebFetchToolkitBuilder(ToolkitBuilder):
@@ -139,4 +298,4 @@ class WebFetchToolkitBuilder(ToolkitBuilder):
     async def make(
         self, *, room: RoomClient, model: str, config: WebFetchConfig
     ) -> Toolkit:
-        return WebToolkit(user_agent=config.user_agent)
+        return WebToolkit(user_agent=config.user_agent, max_length=config.max_length)

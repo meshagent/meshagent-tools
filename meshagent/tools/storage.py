@@ -9,7 +9,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from meshagent.api.messaging import JsonContent, LinkContent, FileContent
+from meshagent.api.messaging import JsonContent, LinkContent, FileContent, TextContent
 from meshagent.api import RoomClient, RoomException
 from meshagent.api.room_server_client import StorageEntry
 
@@ -18,6 +18,14 @@ from .tool import FunctionTool
 from .toolkit import ToolContext, ToolkitBuilder
 from .hosting import RemoteToolkit, Toolkit
 from .blob import get_bytes_from_url
+from ._text_utils import (
+    DEFAULT_TOOL_MAX_LENGTH,
+    grep_text,
+    normalize_context_lines,
+    normalize_offset,
+    truncate_text,
+    validate_max_length,
+)
 
 
 class StorageToolMount(BaseModel):
@@ -468,7 +476,15 @@ class _StorageTool(FunctionTool):
 
 
 class ReadFileTool(_StorageTool):
-    def __init__(self, *, mounts: list[_PreparedMount]):
+    def __init__(
+        self,
+        *,
+        mounts: list[_PreparedMount],
+        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
+    ):
+        self._max_length = validate_max_length(
+            max_length=max_length, tool_name="read_file"
+        )
         super().__init__(
             name="read_file",
             title="read a file file",
@@ -476,12 +492,16 @@ class ReadFileTool(_StorageTool):
             input_schema={
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["path"],
+                "required": ["path", "offset"],
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "the full path of the file",
-                    }
+                    },
+                    "offset": {
+                        "type": ["integer", "null"],
+                        "description": "optional character offset into the file contents",
+                    },
                 },
             },
             mounts=mounts,
@@ -489,9 +509,96 @@ class ReadFileTool(_StorageTool):
 
     async def execute(self, context: ToolContext, **kwargs):
         path = kwargs["path"]
+        offset = normalize_offset(value=kwargs.get("offset"))
         resolved = self._resolve_path(path)
-        return await resolved.mount.read_file(
+        file_content = await resolved.mount.read_file(
             context=context, resolved=resolved, path=path
+        )
+        if not _is_text_like_mime_type(file_content.mime_type):
+            return file_content
+        text = _decode_file_content(file_content)
+        return TextContent(
+            text=truncate_text(text=text, offset=offset, max_length=self._max_length)
+        )
+
+
+class GrepFileTool(_StorageTool):
+    def __init__(
+        self,
+        *,
+        mounts: list[_PreparedMount],
+        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
+    ):
+        self._max_length = validate_max_length(
+            max_length=max_length, tool_name="grep_file"
+        )
+        super().__init__(
+            name="grep_file",
+            title="grep a file",
+            description="search text file contents using a regular expression pattern. PDFs and images are not supported; use read_file instead.",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path", "pattern", "offset", "before", "after"],
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "the full path of the file",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "regular expression pattern used to match file lines",
+                    },
+                    "offset": {
+                        "type": ["integer", "null"],
+                        "description": "optional character offset into the file contents",
+                    },
+                    "before": {
+                        "type": ["integer", "null"],
+                        "description": "optional number of context lines to include before each match",
+                    },
+                    "after": {
+                        "type": ["integer", "null"],
+                        "description": "optional number of context lines to include after each match",
+                    },
+                },
+            },
+            mounts=mounts,
+        )
+
+    async def execute(self, context: ToolContext, **kwargs):
+        path = kwargs["path"]
+        pattern = kwargs["pattern"]
+        offset = normalize_offset(value=kwargs.get("offset"))
+        before = normalize_context_lines(
+            value=kwargs.get("before"), parameter_name="before"
+        )
+        after = normalize_context_lines(
+            value=kwargs.get("after"), parameter_name="after"
+        )
+
+        resolved = self._resolve_path(path)
+        file_content = await resolved.mount.read_file(
+            context=context, resolved=resolved, path=path
+        )
+        if _is_pdf_or_image_mime_type(file_content.mime_type):
+            return TextContent(
+                text="grep_file does not support PDFs or images. Use read_file instead."
+            )
+        text = _decode_file_content(file_content)
+        if offset >= len(text):
+            return TextContent(text="No matches found.")
+
+        line_offset = text.count("\n", 0, offset)
+        matches = grep_text(
+            text=text[offset:],
+            pattern=pattern,
+            start_line=line_offset + 1,
+            before=before,
+            after=after,
+        )
+        return TextContent(
+            text=truncate_text(text=matches, offset=0, max_length=self._max_length)
         )
 
 
@@ -638,10 +745,14 @@ class StorageToolkit(RemoteToolkit):
         self,
         read_only: bool = False,
         mounts: Optional[list[StorageToolMount]] = None,
+        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
     ):
         prepared_mounts = _prepare_mounts(mounts)
         self._mounts = prepared_mounts
         self._read_only = read_only
+        self._max_length = validate_max_length(
+            max_length=max_length, tool_name="storage"
+        )
         has_writable_mount = any(
             not prepared.mount.read_only for prepared in prepared_mounts
         )
@@ -649,13 +760,15 @@ class StorageToolkit(RemoteToolkit):
         if read_only or not has_writable_mount:
             tools = [
                 ListFilesTool(mounts=prepared_mounts),
-                ReadFileTool(mounts=prepared_mounts),
+                ReadFileTool(mounts=prepared_mounts, max_length=self._max_length),
+                GrepFileTool(mounts=prepared_mounts, max_length=self._max_length),
             ]
         else:
             tools = [
                 ListFilesTool(mounts=prepared_mounts),
                 WriteFileTool(mounts=prepared_mounts),
-                ReadFileTool(mounts=prepared_mounts),
+                ReadFileTool(mounts=prepared_mounts, max_length=self._max_length),
+                GrepFileTool(mounts=prepared_mounts, max_length=self._max_length),
                 SaveFileFromUrlTool(mounts=prepared_mounts),
             ]
         super().__init__(
@@ -733,14 +846,58 @@ class StorageToolkit(RemoteToolkit):
 
 class StorageToolkitConfig(ToolkitConfig):
     name: str = "storage"
+    max_length: int = DEFAULT_TOOL_MAX_LENGTH
 
 
 class StorageToolkitBuilder(ToolkitBuilder):
-    def __init__(self, *, mounts: Optional[list[StorageToolMount]] = None):
+    def __init__(
+        self,
+        *,
+        mounts: Optional[list[StorageToolMount]] = None,
+        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
+    ):
         super().__init__(name="storage", type=StorageToolkitConfig)
         self.mounts = mounts
+        self.max_length = max_length
 
     async def make(
         self, *, room: RoomClient, model: str, config: StorageToolkitConfig
     ) -> Toolkit:
-        return StorageToolkit(mounts=self.mounts)
+        return StorageToolkit(
+            mounts=self.mounts,
+            max_length=config.max_length
+            if config.max_length is not None
+            else self.max_length,
+        )
+
+
+def _decode_file_content(content: FileContent) -> str:
+    return content.data.decode("utf-8", errors="replace")
+
+
+def _is_text_like_mime_type(mime_type: str | None) -> bool:
+    if mime_type is None:
+        return False
+
+    normalized = mime_type.split(";", maxsplit=1)[0].strip().lower()
+    if normalized.startswith("text/"):
+        return True
+    if normalized in {
+        "application/json",
+        "text/json",
+        "application/xml",
+        "application/xhtml+xml",
+        "application/javascript",
+        "application/x-javascript",
+    }:
+        return True
+    return normalized.endswith("+json")
+
+
+def _is_pdf_or_image_mime_type(mime_type: str | None) -> bool:
+    if mime_type is None:
+        return False
+    normalized = mime_type.split(";", maxsplit=1)[0].strip().lower()
+    if normalized == "application/pdf":
+        return True
+    return normalized.startswith("image/")

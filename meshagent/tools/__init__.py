@@ -31,6 +31,7 @@ from .version import __version__
 from .web_toolkit import (
     WebFetchConfig,
     WebFetchTool,
+    WebGrepTool,
     WebFetchToolkitBuilder,
     WebToolkit,
 )
@@ -79,6 +80,7 @@ __all__ = [
     get_bytes_from_url,
     WebFetchConfig,
     WebFetchTool,
+    WebGrepTool,
     WebFetchToolkitBuilder,
     WebToolkit,
     ContainerShellToolConfig,
