@@ -514,7 +514,10 @@ class ReadFileTool(_StorageTool):
         file_content = await resolved.mount.read_file(
             context=context, resolved=resolved, path=path
         )
-        if not _is_text_like_mime_type(file_content.mime_type):
+        if not _is_text_like_file(
+            mime_type=file_content.mime_type,
+            path=path,
+        ):
             return file_content
         text = _decode_file_content(file_content)
         return TextContent(
@@ -581,7 +584,7 @@ class GrepFileTool(_StorageTool):
         file_content = await resolved.mount.read_file(
             context=context, resolved=resolved, path=path
         )
-        if _is_pdf_or_image_mime_type(file_content.mime_type):
+        if _is_pdf_or_image_file(mime_type=file_content.mime_type, path=path):
             return TextContent(
                 text="grep_file does not support PDFs or images. Use read_file instead."
             )
@@ -889,6 +892,14 @@ def _is_text_like_mime_type(mime_type: str | None) -> bool:
         "application/xhtml+xml",
         "application/javascript",
         "application/x-javascript",
+        "application/yaml",
+        "application/x-yaml",
+        "text/yaml",
+        "text/x-yaml",
+        "application/yml",
+        "application/x-yml",
+        "text/yml",
+        "text/x-yml",
     }:
         return True
     return normalized.endswith("+json")
@@ -901,3 +912,50 @@ def _is_pdf_or_image_mime_type(mime_type: str | None) -> bool:
     if normalized == "application/pdf":
         return True
     return normalized.startswith("image/")
+
+
+def _path_extension(path: str) -> str:
+    return os.path.splitext(path)[1].strip().lower()
+
+
+def _is_text_like_extension(path: str) -> bool:
+    return _path_extension(path) in {
+        ".yaml",
+        ".yml",
+        ".json",
+        ".jsonl",
+        ".ndjson",
+        ".geojson",
+    }
+
+
+def _is_pdf_or_image_extension(path: str) -> bool:
+    extension = _path_extension(path)
+    if extension == ".pdf":
+        return True
+    return extension in {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".svg",
+        ".avif",
+        ".heic",
+        ".heif",
+    }
+
+
+def _is_text_like_file(*, mime_type: str | None, path: str) -> bool:
+    if _is_text_like_mime_type(mime_type):
+        return True
+    return _is_text_like_extension(path)
+
+
+def _is_pdf_or_image_file(*, mime_type: str | None, path: str) -> bool:
+    if _is_pdf_or_image_mime_type(mime_type):
+        return True
+    return _is_pdf_or_image_extension(path)

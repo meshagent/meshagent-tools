@@ -112,7 +112,9 @@ class WebFetchTool(FunctionTool):
                         )
                     )
 
-                if _is_text_content_type(content_type):
+                if _is_text_content_type(content_type) or _is_text_like_url(
+                    url=url, content_type=content_type
+                ):
                     text = _decode_text(data=data, charset=resp.charset)
                     if content_type == "text/html":
                         from html_to_markdown import convert
@@ -126,7 +128,9 @@ class WebFetchTool(FunctionTool):
                         )
                     )
 
-                if _is_file_content_type(content_type):
+                if _is_file_content_type(content_type) or _is_pdf_or_image_url(
+                    url=url, content_type=content_type
+                ):
                     filename = _infer_filename(url=url, content_type=content_type)
                     return FileContent(
                         name=filename,
@@ -211,7 +215,9 @@ class WebGrepTool(FunctionTool):
 
                 content_type = (resp.content_type or "").lower()
                 data = await resp.read()
-                if _is_file_content_type(content_type):
+                if _is_file_content_type(content_type) or _is_pdf_or_image_url(
+                    url=url, content_type=content_type
+                ):
                     return TextContent(
                         text="web_grep does not support PDFs or images. Use web_fetch instead."
                     )
@@ -267,6 +273,14 @@ def _is_text_content_type(content_type: str) -> bool:
         "application/xhtml+xml",
         "application/javascript",
         "application/x-javascript",
+        "application/yaml",
+        "application/x-yaml",
+        "text/yaml",
+        "text/x-yaml",
+        "application/yml",
+        "application/x-yml",
+        "text/yml",
+        "text/x-yml",
     }
 
 
@@ -274,6 +288,57 @@ def _is_file_content_type(content_type: str) -> bool:
     if content_type.startswith("image/"):
         return True
     return content_type == "application/pdf"
+
+
+def _url_extension(url: str) -> str:
+    parsed = urlparse(url)
+    return os.path.splitext(parsed.path)[1].strip().lower()
+
+
+def _is_text_like_url(*, url: str, content_type: str) -> bool:
+    # If the server provides a known text-like type, defer to that immediately.
+    if _is_text_content_type(content_type):
+        return True
+
+    # Some raw file hosts return application/octet-stream for YAML files.
+    if content_type not in {
+        "",
+        "application/octet-stream",
+        "binary/octet-stream",
+    }:
+        return False
+
+    return _url_extension(url) in {
+        ".yaml",
+        ".yml",
+        ".json",
+        ".jsonl",
+        ".ndjson",
+        ".geojson",
+    }
+
+
+def _is_pdf_or_image_url(*, url: str, content_type: str) -> bool:
+    if _is_file_content_type(content_type):
+        return True
+
+    extension = _url_extension(url)
+    if extension == ".pdf":
+        return True
+    return extension in {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".svg",
+        ".avif",
+        ".heic",
+        ".heif",
+    }
 
 
 def _infer_filename(*, url: str, content_type: str) -> str:

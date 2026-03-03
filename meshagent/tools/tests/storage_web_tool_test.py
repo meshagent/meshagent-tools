@@ -9,6 +9,7 @@ from meshagent.tools._text_utils import grep_text, truncate_text
 from meshagent.tools.storage import StorageToolLocalMount, StorageToolkit
 from meshagent.tools.web_toolkit import WebToolkit
 import meshagent.tools.web_toolkit as web_toolkit
+import meshagent.tools.storage as storage_toolkit
 
 
 class _FakeResponse:
@@ -121,6 +122,78 @@ async def test_read_file_returns_binary_file_content_unchanged(tmp_path) -> None
 
 
 @pytest.mark.asyncio
+async def test_read_file_treats_yaml_as_text_when_mime_is_unknown(
+    tmp_path, monkeypatch
+) -> None:
+    content = "name: webmaster\nversion: v1\n"
+    file_path = tmp_path / "webmaster.yaml"
+    file_path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(
+        storage_toolkit.mimetypes,
+        "guess_type",
+        lambda _path: (None, None),
+    )
+
+    toolkit = StorageToolkit(
+        read_only=True,
+        max_length=500,
+        mounts=[
+            StorageToolLocalMount(path="/", local_path=str(tmp_path)),
+        ],
+    )
+    result = await toolkit.execute(
+        context=_tool_context(),
+        name="read_file",
+        input=JsonContent(
+            json={
+                "path": "/webmaster.yaml",
+                "offset": 0,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == content
+
+
+@pytest.mark.asyncio
+async def test_read_file_treats_json_as_text_when_mime_is_unknown(
+    tmp_path, monkeypatch
+) -> None:
+    content = '{"name":"webmaster","version":"v1"}\n'
+    file_path = tmp_path / "webmaster.json"
+    file_path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(
+        storage_toolkit.mimetypes,
+        "guess_type",
+        lambda _path: (None, None),
+    )
+
+    toolkit = StorageToolkit(
+        read_only=True,
+        max_length=500,
+        mounts=[
+            StorageToolLocalMount(path="/", local_path=str(tmp_path)),
+        ],
+    )
+    result = await toolkit.execute(
+        context=_tool_context(),
+        name="read_file",
+        input=JsonContent(
+            json={
+                "path": "/webmaster.json",
+                "offset": 0,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == content
+
+
+@pytest.mark.asyncio
 async def test_grep_file_supports_context_and_offset(tmp_path) -> None:
     content = "\n".join(
         [
@@ -165,6 +238,45 @@ async def test_grep_file_supports_context_and_offset(tmp_path) -> None:
         before=1,
         after=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_grep_file_treats_yaml_as_text_when_mime_is_unknown(
+    tmp_path, monkeypatch
+) -> None:
+    content = "kind: Service\nmetadata:\n  name: webmaster\n"
+    file_path = tmp_path / "webmaster.yaml"
+    file_path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(
+        storage_toolkit.mimetypes,
+        "guess_type",
+        lambda _path: (None, None),
+    )
+
+    toolkit = StorageToolkit(
+        read_only=True,
+        max_length=500,
+        mounts=[
+            StorageToolLocalMount(path="/", local_path=str(tmp_path)),
+        ],
+    )
+    result = await toolkit.execute(
+        context=_tool_context(),
+        name="grep_file",
+        input=JsonContent(
+            json={
+                "path": "/webmaster.yaml",
+                "pattern": "metadata",
+                "offset": 0,
+                "before": None,
+                "after": None,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert "metadata:" in result.text
 
 
 @pytest.mark.asyncio
@@ -328,6 +440,64 @@ async def test_web_fetch_returns_image_file_content(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_treats_yaml_as_text_when_content_type_is_octet_stream(
+    monkeypatch,
+) -> None:
+    body = "kind: Service\nmetadata:\n  name: webmaster\n"
+    fake_response = _FakeResponse(
+        data=body.encode("utf-8"),
+        content_type="application/octet-stream",
+        charset="utf-8",
+    )
+    fake_session = _FakeSession(fake_response)
+    monkeypatch.setattr(web_toolkit, "new_client_session", lambda: fake_session)
+
+    toolkit = WebToolkit(max_length=500)
+    result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_fetch",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/webmaster.yaml",
+                "offset": 0,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == body
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_treats_json_as_text_when_content_type_is_octet_stream(
+    monkeypatch,
+) -> None:
+    body = '{"kind":"Service","metadata":{"name":"webmaster"}}\n'
+    fake_response = _FakeResponse(
+        data=body.encode("utf-8"),
+        content_type="application/octet-stream",
+        charset="utf-8",
+    )
+    fake_session = _FakeSession(fake_response)
+    monkeypatch.setattr(web_toolkit, "new_client_session", lambda: fake_session)
+
+    toolkit = WebToolkit(max_length=500)
+    result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_fetch",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/webmaster.json",
+                "offset": 0,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == body
+
+
+@pytest.mark.asyncio
 async def test_web_grep_supports_context_and_offset(monkeypatch) -> None:
     body = "\n".join(
         [
@@ -429,6 +599,39 @@ async def test_web_grep_returns_guidance_for_pdf_and_images(monkeypatch) -> None
     assert image_result.text == (
         "web_grep does not support PDFs or images. Use web_fetch instead."
     )
+
+
+@pytest.mark.asyncio
+async def test_web_grep_treats_yaml_as_text_when_content_type_is_octet_stream(
+    monkeypatch,
+) -> None:
+    body = "kind: Service\nmetadata:\n  name: webmaster\n"
+    fake_response = _FakeResponse(
+        data=body.encode("utf-8"),
+        content_type="application/octet-stream",
+        charset="utf-8",
+    )
+
+    monkeypatch.setattr(
+        web_toolkit, "new_client_session", lambda: _FakeSession(fake_response)
+    )
+    toolkit = WebToolkit(max_length=500)
+    result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_grep",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/webmaster.yaml",
+                "pattern": "metadata",
+                "offset": 0,
+                "before": None,
+                "after": None,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert "metadata:" in result.text
 
 
 def test_toolkits_expose_grep_tools() -> None:
