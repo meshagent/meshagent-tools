@@ -3,12 +3,22 @@ from meshagent.api.participant import Participant
 import logging
 from abc import ABC
 
-from typing import Optional, Dict, Any, Callable, get_type_hints
+from typing import (
+    Optional,
+    Dict,
+    Any,
+    Callable,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 from collections.abc import AsyncIterable
+from types import NoneType, UnionType
 
 import inspect
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, ConfigDict, create_model
 
 from meshagent.tools.strict_schema import ensure_strict_json_schema
 
@@ -20,6 +30,86 @@ from opentelemetry import trace
 tracer = trace.get_tracer("meshagent.tools")
 
 logger = logging.getLogger("tools")
+
+
+def _strict_model_schema(model_type: type[BaseModel]) -> dict[str, Any]:
+    return ensure_strict_json_schema(model_type.model_json_schema())
+
+
+def _optional_json_output_schema(model_type: type[BaseModel]) -> dict[str, Any]:
+    model_schema = model_type.model_json_schema()
+    defs = model_schema.pop("$defs", None)
+    schema: dict[str, Any] = {
+        "anyOf": [
+            model_schema,
+            {"type": "null"},
+        ]
+    }
+    if isinstance(defs, dict) and len(defs) > 0:
+        schema["$defs"] = defs
+    return ensure_strict_json_schema(schema)
+
+
+def _create_execution_input_model(
+    *,
+    name: str,
+    fn: Callable[..., Any],
+) -> tuple[type[BaseModel] | None, tuple[str, ...]]:
+    signature = inspect.signature(fn)
+    hints = get_type_hints(fn, include_extras=True)
+    fields: dict[str, tuple[Any, Any]] = {}
+
+    for param_name, param in signature.parameters.items():
+        if param_name in ("self", "cls", "context"):
+            continue
+        if hints.get(param_name) is ToolContext:
+            continue
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            return None, ()
+
+        annotation = hints.get(param_name, Any)
+        default = param.default if param.default is not inspect._empty else ...
+        fields[param_name] = (annotation, default)
+
+    model = create_model(
+        name,
+        __config__=ConfigDict(extra="ignore"),
+        **fields,
+    )
+    return model, tuple(fields)
+
+
+def _infer_output_spec_from_annotation(
+    annotation: Any,
+) -> tuple[ToolContentSpec | None, dict[str, Any] | None]:
+    if annotation in (inspect.Signature.empty, Any):
+        return None, None
+
+    if annotation in (None, NoneType):
+        return ToolContentSpec(types=["empty"], stream=False), None
+
+    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
+        schema = _strict_model_schema(annotation)
+        return ToolContentSpec(types=["json"], stream=False, schema=schema), schema
+
+    origin = get_origin(annotation)
+    if origin not in (UnionType, Union):
+        return None, None
+
+    args = [arg for arg in get_args(annotation) if arg is not NoneType]
+    if len(args) != 1:
+        return None, None
+
+    model_type = args[0]
+    if not inspect.isclass(model_type) or not issubclass(model_type, BaseModel):
+        return None, None
+
+    schema = _optional_json_output_schema(model_type)
+    return ToolContentSpec(types=["json", "empty"], stream=False, schema=schema), schema
 
 
 class ToolContext:
@@ -189,9 +279,28 @@ class FunctionTool(BaseTool):
             pricing=pricing,
             supports_context=supports_context,
         )
+        (
+            self._execution_input_model,
+            self._execution_input_fields,
+        ) = _create_execution_input_model(
+            name=f"{self.__class__.__name__}ExecutionInput",
+            fn=self.execute,
+        )
 
     async def execute(self, context: ToolContext, **kwargs):
         raise (Exception("Not implemented"))
+
+    def normalize_execution_arguments(
+        self, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        if self._execution_input_model is None:
+            return arguments
+
+        parsed = self._execution_input_model.model_validate(arguments)
+        return {
+            field_name: getattr(parsed, field_name)
+            for field_name in self._execution_input_fields
+        }
 
 
 class ContentTool(BaseTool):
@@ -249,6 +358,11 @@ def tool(
     def decorator(fn: Callable[..., Content]):
         signature = inspect.signature(fn)
         hints = get_type_hints(fn, include_extras=True)
+        inferred_output_spec, inferred_output_schema = (
+            _infer_output_spec_from_annotation(
+                hints.get("return", inspect.Signature.empty)
+            )
+        )
 
         supports_context = False
         fields: dict[str, tuple[Any, Any]] = {}
@@ -290,6 +404,8 @@ def tool(
                     rules=rules,
                     thumbnail_url=thumbnail_url,
                     input_schema=strict_schema,
+                    output_spec=inferred_output_spec,
+                    output_schema=inferred_output_schema,
                     supports_context=supports_context,
                 )
                 self.strict = True

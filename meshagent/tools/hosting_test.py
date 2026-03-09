@@ -41,7 +41,7 @@ class _FakeProtocol:
 
     async def send(self, *, type: str, data: bytes, message_id: int) -> None:
         self.sent.append(_SentMessage(typ=type, data=data, message_id=message_id))
-        if type == "agent.tool_call_response" and not self.response_sent.done():
+        if type == "room.tool_call_response" and not self.response_sent.done():
             self.response_sent.set_result(True)
 
 
@@ -174,7 +174,7 @@ async def test_remote_toolkit_stream_parts_are_normalized_as_chunks() -> None:
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=42,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={"name": "stream_parts", "arguments": {}, "caller_id": "caller-1"}
         ),
@@ -184,20 +184,20 @@ async def test_remote_toolkit_stream_parts_are_normalized_as_chunks() -> None:
 
     assert len(room.protocol.sent) == 4
     open_response = room.protocol.sent[0]
-    assert open_response.typ == "agent.tool_call_response"
+    assert open_response.typ == "room.tool_call_response"
     open_chunk = unpack_content(open_response.data)
     assert isinstance(open_chunk, _ControlContent)
     assert open_chunk.method == "open"
 
     body_event = room.protocol.sent[1]
-    assert body_event.typ == "agent.tool_call_response_chunk"
+    assert body_event.typ == "room.tool_call_response_chunk"
     body_header, body_payload = unpack_message(body_event.data)
     body_chunk = unpack_content_parts(header=body_header["chunk"], payload=body_payload)
     assert isinstance(body_chunk, JsonContent)
     assert body_chunk.json == {"step": 1}
 
     second_event = room.protocol.sent[2]
-    assert second_event.typ == "agent.tool_call_response_chunk"
+    assert second_event.typ == "room.tool_call_response_chunk"
     second_header, second_payload = unpack_message(second_event.data)
     second_chunk = unpack_content_parts(
         header=second_header["chunk"], payload=second_payload
@@ -206,7 +206,7 @@ async def test_remote_toolkit_stream_parts_are_normalized_as_chunks() -> None:
     assert second_chunk.text == "final text"
 
     close_event = room.protocol.sent[3]
-    assert close_event.typ == "agent.tool_call_response_chunk"
+    assert close_event.typ == "room.tool_call_response_chunk"
     close_header, close_payload = unpack_message(close_event.data)
     close_chunk = unpack_content_parts(
         header=close_header["chunk"], payload=close_payload
@@ -226,7 +226,7 @@ async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=43,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={
                 "name": "collect_request_chunks",
@@ -240,7 +240,7 @@ async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
     await toolkit._tool_call_request_chunk(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=43,
-        msg_type="agent.tool_call_request_chunk.test",
+        msg_type="room.tool_call_request_chunk.test",
         data=pack_message(
             header={
                 "tool_call_id": "tc-req-1",
@@ -251,7 +251,7 @@ async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
     await toolkit._tool_call_request_chunk(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=43,
-        msg_type="agent.tool_call_request_chunk.test",
+        msg_type="room.tool_call_request_chunk.test",
         data=pack_message(
             header={
                 "tool_call_id": "tc-req-1",
@@ -262,7 +262,7 @@ async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
     await toolkit._tool_call_request_chunk(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=43,
-        msg_type="agent.tool_call_request_chunk.test",
+        msg_type="room.tool_call_request_chunk.test",
         data=pack_message(
             header={
                 "tool_call_id": "tc-req-1",
@@ -290,7 +290,7 @@ async def test_remote_toolkit_allows_non_stream_content_for_content_tool() -> No
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=44,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={
                 "name": "collect_request_chunks",
@@ -323,7 +323,7 @@ async def test_remote_toolkit_validation_rejects_unary_output_type_mismatch() ->
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=45,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={
                 "name": "wrong_output_type",
@@ -357,7 +357,7 @@ async def test_remote_toolkit_validation_mode_none_skips_output_type_validation(
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=46,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={
                 "name": "wrong_output_type",
@@ -386,7 +386,7 @@ async def test_remote_toolkit_validation_rejects_unary_input_schema_mismatch() -
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=47,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={
                 "name": "schema_validated_text_echo",
@@ -417,7 +417,7 @@ async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() 
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=48,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={
                 "name": "collect_validated_text_stream",
@@ -431,7 +431,7 @@ async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() 
     await toolkit._tool_call_request_chunk(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=48,
-        msg_type="agent.tool_call_request_chunk.test",
+        msg_type="room.tool_call_request_chunk.test",
         data=pack_message(
             header={
                 "tool_call_id": "tc-req-6",
@@ -442,7 +442,7 @@ async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() 
     await toolkit._tool_call_request_chunk(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=48,
-        msg_type="agent.tool_call_request_chunk.test",
+        msg_type="room.tool_call_request_chunk.test",
         data=pack_message(
             header={
                 "tool_call_id": "tc-req-6",
@@ -453,7 +453,7 @@ async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() 
     await toolkit._tool_call_request_chunk(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=48,
-        msg_type="agent.tool_call_request_chunk.test",
+        msg_type="room.tool_call_request_chunk.test",
         data=pack_message(
             header={
                 "tool_call_id": "tc-req-6",
@@ -482,7 +482,7 @@ async def test_remote_toolkit_validation_stream_output_sends_invalid_data_close_
     await toolkit._tool_call(
         protocol=room.protocol,  # type: ignore[arg-type]
         message_id=49,
-        msg_type="agent.tool_call.test",
+        msg_type="room.tool_call.test",
         data=pack_message(
             header={
                 "name": "invalid_stream_output",

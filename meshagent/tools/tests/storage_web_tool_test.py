@@ -6,7 +6,11 @@ from meshagent.api import RoomException
 from meshagent.api.messaging import FileContent, JsonContent, TextContent
 from meshagent.tools import ToolContext
 from meshagent.tools._text_utils import grep_text, truncate_text
-from meshagent.tools.storage import StorageToolLocalMount, StorageToolkit
+from meshagent.tools.storage import (
+    StorageToolLocalMount,
+    StorageToolRoomMount,
+    StorageToolkit,
+)
 from meshagent.tools.web_toolkit import WebToolkit
 import meshagent.tools.web_toolkit as web_toolkit
 import meshagent.tools.storage as storage_toolkit
@@ -62,6 +66,45 @@ class _FakeSession:
 
 def _tool_context() -> ToolContext:
     return ToolContext(room=object(), caller=object())
+
+
+class _FakeStorageClient:
+    def __init__(self) -> None:
+        self.upload_calls: list[dict] = []
+        self.download_calls: list[str] = []
+
+    async def upload(self, *, path: str, data: bytes, overwrite: bool) -> None:
+        self.upload_calls.append(
+            {
+                "path": path,
+                "data": data,
+                "overwrite": overwrite,
+            }
+        )
+
+    async def download(self, *, path: str) -> FileContent:
+        self.download_calls.append(path)
+        return FileContent(
+            name="rules.txt",
+            mime_type="text/plain",
+            data=b"hello from room storage",
+        )
+
+    async def exists(self, *, path: str) -> bool:
+        del path
+        return False
+
+
+class _FakeSyncClient:
+    async def describe(self, *, path: str) -> dict:
+        del path
+        return {"ok": True}
+
+
+class _FakeRoom:
+    def __init__(self) -> None:
+        self.storage = _FakeStorageClient()
+        self.sync = _FakeSyncClient()
 
 
 @pytest.mark.asyncio
@@ -238,6 +281,62 @@ async def test_grep_file_supports_context_and_offset(tmp_path) -> None:
         before=1,
         after=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_room_mount_write_file_uses_room_storage_upload() -> None:
+    room = _FakeRoom()
+    toolkit = StorageToolkit(
+        mounts=[
+            StorageToolRoomMount(path="/"),
+        ],
+    )
+
+    result = await toolkit.execute(
+        context=ToolContext(room=room, caller=object()),
+        name="write_file",
+        input=JsonContent(
+            json={
+                "path": "/rules.txt",
+                "text": "hello from toolkit",
+                "overwrite": True,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert room.storage.upload_calls == [
+        {
+            "path": "rules.txt",
+            "data": b"hello from toolkit",
+            "overwrite": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_room_mount_read_file_uses_room_storage_download() -> None:
+    room = _FakeRoom()
+    toolkit = StorageToolkit(
+        mounts=[
+            StorageToolRoomMount(path="/"),
+        ],
+    )
+
+    result = await toolkit.execute(
+        context=ToolContext(room=room, caller=object()),
+        name="read_file",
+        input=JsonContent(
+            json={
+                "path": "/rules.txt",
+                "offset": 0,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == "hello from room storage"
+    assert room.storage.download_calls == ["rules.txt"]
 
 
 @pytest.mark.asyncio
