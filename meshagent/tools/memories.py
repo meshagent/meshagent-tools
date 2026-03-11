@@ -212,6 +212,8 @@ class _MemoriesTool(FunctionTool):
                 statement=statement,
             )
         except RoomException as ex:
+            if self._is_memory_not_found_error(ex):
+                return []
             message = str(ex).lower()
             if (
                 "dataset 'entity' not found" in message
@@ -243,6 +245,8 @@ class _MemoriesTool(FunctionTool):
                 statement=statement,
             )
         except RoomException as ex:
+            if self._is_memory_not_found_error(ex):
+                return []
             message = str(ex).lower()
             if (
                 "dataset 'relationship' not found" in message
@@ -439,14 +443,17 @@ class GetRecentMemoriesTool(_MemoriesTool):
                 statement=statement,
             )
         except RoomException as ex:
-            message = str(ex).lower()
-            if (
-                "dataset 'entity' not found" in message
-                or "table has no data" in message
-            ):
+            if self._is_memory_not_found_error(ex):
                 rows = []
             else:
-                raise
+                message = str(ex).lower()
+                if (
+                    "dataset 'entity' not found" in message
+                    or "table has no data" in message
+                ):
+                    rows = []
+                else:
+                    raise
         return {"memories": [*(_entity_from_entity_row(row) for row in rows)]}
 
 
