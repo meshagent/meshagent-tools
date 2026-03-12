@@ -185,9 +185,11 @@ class StorageToolRoomMount(StorageToolMount):
     ) -> None:
         self._ensure_writable(path)
         room_path = _require_room_path(resolved)
-        handle = await context.room.storage.open(path=room_path, overwrite=overwrite)
-        await context.room.storage.write(handle=handle, data=text.encode("utf-8"))
-        await context.room.storage.close(handle=handle)
+        await context.room.storage.upload(
+            path=room_path,
+            data=text.encode("utf-8"),
+            overwrite=overwrite,
+        )
 
     async def write_bytes(
         self,
@@ -206,11 +208,11 @@ class StorageToolRoomMount(StorageToolMount):
                 raise RoomException(
                     f"a file already exists at the path: {path}, try another filename"
                 )
-        handle = await context.room.storage.open(path=room_path, overwrite=overwrite)
-        try:
-            await context.room.storage.write(handle=handle, data=data)
-        finally:
-            await context.room.storage.close(handle=handle)
+        await context.room.storage.upload(
+            path=room_path,
+            data=data,
+            overwrite=overwrite,
+        )
 
     async def list_entries(
         self, *, context: ToolContext, resolved: "_ResolvedStoragePath"

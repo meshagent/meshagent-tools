@@ -33,6 +33,7 @@ class _FakeMemoryClient:
         self.next_query_results: list[list[dict[str, Any]]] = []
         self.create_exception: Optional[Exception] = None
         self.recall_exception: Optional[Exception] = None
+        self.query_exception: Optional[Exception] = None
 
     async def upsert_nodes(
         self,
@@ -187,6 +188,8 @@ class _FakeMemoryClient:
                 "namespace": namespace,
             }
         )
+        if self.query_exception is not None:
+            raise self.query_exception
         if len(self.next_query_results) > 0:
             return self.next_query_results.pop(0)
         return []
@@ -466,6 +469,26 @@ async def test_get_recent_memories_uses_temporal_sorting() -> None:
     assert "ORDER BY e.valid_at DESC, e.created_at DESC, e.name" in statement
     assert "WHERE e.entity_type = 'MEMORY'" in statement
     assert room.memory.query_calls[0]["namespace"] == ["team"]
+
+
+@pytest.mark.asyncio
+async def test_get_recent_memories_returns_empty_when_memory_is_missing() -> None:
+    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
+    room = _FakeRoom()
+    room.memory.query_exception = RoomException(
+        "memory does not exist: graph",
+        code=ErrorCode.MEMORY_NOT_FOUND,
+    )
+    context = ToolContext(room=room, caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="get_recent_memories",
+        input=JsonContent(json={"limit": 10, "entity_type": "MEMORY"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"memories": []}
 
 
 @pytest.mark.asyncio

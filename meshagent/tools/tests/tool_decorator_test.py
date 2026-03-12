@@ -17,7 +17,7 @@ class Result(BaseModel):
 
 
 @tool(name="make_payload")
-async def make_payload(context: ToolContext, payload: Payload, flag: bool):
+async def make_payload(context: ToolContext, payload: Payload, flag: bool) -> Result:
     return Result(name=payload.name, count=payload.count, flag=flag)
 
 
@@ -72,3 +72,31 @@ def test_decorator_schema_is_strict():
     assert schema["additionalProperties"] is False
     assert "payload" in schema["properties"]
     assert "flag" in schema["properties"]
+
+
+def test_decorator_infers_strict_json_output_schema() -> None:
+    assert make_payload.output_spec is not None
+    assert make_payload.output_spec.types == ["json"]
+    assert make_payload.output_spec.stream is False
+    assert make_payload.output_spec.schema is not None
+    assert make_payload.output_spec.schema["additionalProperties"] is False
+    assert set(make_payload.output_spec.schema["required"]) == {"name", "count", "flag"}
+
+
+class MaybeResult(BaseModel):
+    value: str
+
+
+@tool(name="maybe_payload")
+def maybe_payload(*, enabled: bool) -> MaybeResult | None:
+    if not enabled:
+        return None
+    return MaybeResult(value="ok")
+
+
+def test_decorator_infers_optional_model_output_schema() -> None:
+    assert maybe_payload.output_spec is not None
+    assert maybe_payload.output_spec.types == ["json", "empty"]
+    assert maybe_payload.output_spec.stream is False
+    assert maybe_payload.output_spec.schema is not None
+    assert "anyOf" in maybe_payload.output_spec.schema
