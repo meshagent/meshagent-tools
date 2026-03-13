@@ -17,7 +17,7 @@ from meshagent.api.messaging import (
     unpack_content_parts,
 )
 from meshagent.api.room_server_client import ToolContentSpec
-from meshagent.tools import ContentTool, tool
+from meshagent.tools import ContentTool, FunctionTool, tool
 from meshagent.tools.hosting import RemoteToolkit
 
 
@@ -54,6 +54,15 @@ class _FakeRoom:
     def __init__(self):
         self.protocol = _FakeProtocol()
         self.messaging = _FakeMessaging()
+        self.requests: list[tuple[str, dict]] = []
+
+    async def send_request(self, typ: str, request: dict):
+        self.requests.append((typ, request))
+        if typ == "room.register_toolkit":
+            return {"id": "registration-1"}
+        if typ == "room.unregister_toolkit":
+            return {"ok": True}
+        raise AssertionError(f"unexpected request: {typ}")
 
 
 class _CollectRequestChunksTool(ContentTool):
@@ -163,6 +172,25 @@ class _InvalidStreamOutputTool(ContentTool):
             yield TextContent(text="invalid")
 
         return stream()
+
+
+class _StrictToggleTool(FunctionTool):
+    def __init__(self, *, name: str, strict: bool):
+        super().__init__(
+            name=name,
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+                "required": [],
+            },
+            strict=strict,
+        )
+
+    async def execute(self, context, **kwargs):
+        del context
+        del kwargs
+        return JsonContent(json={"ok": True})
 
 
 @pytest.mark.asyncio
@@ -511,3 +539,25 @@ async def test_remote_toolkit_validation_stream_output_sends_invalid_data_close_
     assert close_chunk.status_code == ControlCloseStatus.INVALID_DATA
     assert close_chunk.message is not None
     assert "output content type 'text'" in close_chunk.message
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_registration_preserves_strict_tool_metadata() -> None:
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(
+        name="test",
+        tools=[
+            _StrictToggleTool(name="strict_tool", strict=True),
+            _StrictToggleTool(name="loose_tool", strict=False),
+        ],
+        public=True,
+    )
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._register(public=True)
+
+    assert len(room.requests) == 1
+    typ, request = room.requests[0]
+    assert typ == "room.register_toolkit"
+    assert request["tools"]["strict_tool"]["strict"] is True
+    assert request["tools"]["loose_tool"]["strict"] is False

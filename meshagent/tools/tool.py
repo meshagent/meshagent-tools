@@ -9,6 +9,7 @@ from typing import (
     Any,
     Callable,
     Union,
+    Literal,
     get_args,
     get_origin,
     get_type_hints,
@@ -30,6 +31,8 @@ from opentelemetry import trace
 tracer = trace.get_tracer("meshagent.tools")
 
 logger = logging.getLogger("tools")
+
+ValidationMode = Literal["full", "content_types", "none"]
 
 
 def _strict_model_schema(model_type: type[BaseModel]) -> dict[str, Any]:
@@ -121,12 +124,14 @@ class ToolContext:
         on_behalf_of: Optional[Participant] = None,
         caller_context: Optional[Dict[str, Any]] = None,
         event_handler: Optional[Callable[[dict], None]] = None,
+        validation_mode: Optional[ValidationMode] = None,
     ):
         self._room = room
         self._caller = caller
         self._on_behalf_of = on_behalf_of
         self._caller_context = caller_context
         self._event_handler = event_handler
+        self._validation_mode = validation_mode
 
     @property
     def caller(self) -> Participant:
@@ -143,6 +148,10 @@ class ToolContext:
     @property
     def caller_context(self) -> Optional[Dict[str, Any]]:
         return self._caller_context
+
+    @property
+    def validation_mode(self) -> Optional[ValidationMode]:
+        return self._validation_mode
 
     def emit(self, event: dict):
         if self._event_handler is not None:
@@ -247,6 +256,7 @@ class FunctionTool(BaseTool):
         *,
         name: str,
         input_schema: dict,
+        strict: bool = True,
         output_spec: ToolContentSpec | None = None,
         output_schema: dict | None = None,
         defs: Optional[dict[str, dict]] = None,
@@ -286,6 +296,7 @@ class FunctionTool(BaseTool):
             name=f"{self.__class__.__name__}ExecutionInput",
             fn=self.execute,
         )
+        self.strict = strict
 
     async def execute(self, context: ToolContext, **kwargs):
         raise (Exception("Not implemented"))

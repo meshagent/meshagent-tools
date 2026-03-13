@@ -165,6 +165,7 @@ class RemoteTool(FunctionTool):
         *,
         name,
         input_schema,
+        strict: bool = True,
         title=None,
         description=None,
         rules=None,
@@ -174,6 +175,7 @@ class RemoteTool(FunctionTool):
         super().__init__(
             name=name,
             input_schema=input_schema,
+            strict=strict,
             title=title,
             description=description,
             rules=rules,
@@ -549,6 +551,7 @@ class RemoteToolkit(Toolkit):
                 "defs": tool.defs,
                 "pricing": tool.pricing,
                 "supports_context": tool.supports_context,
+                "strict": tool.strict if isinstance(tool, FunctionTool) else None,
             }
 
         result = await self._room.send_request(

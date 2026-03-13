@@ -20,13 +20,17 @@ from meshagent.api.messaging import (
 )
 from meshagent.api.room_server_client import RoomException
 from meshagent.tools.config import ToolkitConfig
-from meshagent.tools.tool import ToolContext, BaseTool, FunctionTool, ContentTool
+from meshagent.tools.tool import (
+    ToolContext,
+    BaseTool,
+    FunctionTool,
+    ContentTool,
+    ValidationMode,
+)
 
 from opentelemetry import trace
 
 tracer = trace.get_tracer("meshagent.tools")
-
-ValidationMode = Literal["full", "content_types", "none"]
 
 
 class InvalidToolDataException(RoomException):
@@ -339,6 +343,9 @@ class Toolkit(ToolkitBuilder):
     ):
         with tracer.start_as_current_span("toolkit.execute") as span:
             span.set_attributes({"toolkit": self.name, "tool": name})
+            context_validation_mode = context.validation_mode
+            if context_validation_mode is not None:
+                validate_function_schema = context_validation_mode == "full"
 
             tool = self.get_tool(name)
             if not isinstance(tool, (FunctionTool, ContentTool)):
@@ -433,7 +440,11 @@ class Toolkit(ToolkitBuilder):
         validation_mode: ValidationMode | None = None,
     ) -> Content | AsyncIterable[Content]:
         validation_mode = (
-            self.validation_mode if validation_mode is None else validation_mode
+            context.validation_mode
+            if validation_mode is None and context.validation_mode is not None
+            else self.validation_mode
+            if validation_mode is None
+            else validation_mode
         )
 
         tool = self.get_tool(name)
