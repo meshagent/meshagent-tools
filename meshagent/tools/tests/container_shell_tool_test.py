@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+import meshagent.tools.container_shell as container_shell_module
 from meshagent.tools import ContainerShellTool, ToolContext
 
 
@@ -109,3 +110,97 @@ async def test_container_shell_tool_emits_live_output_events() -> None:
     for event in emitted:
         assert event["type"] == "meshagent.handler.output"
         assert event["item_id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_container_shell_tool_truncates_success_output_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(container_shell_module, "DEFAULT_MAX_OUTPUT_LENGTH", 8)
+
+    room = _FakeRoom()
+    room.containers.next_exec = _FakeExec(
+        stdout_chunks=[b"abcdefghijk"],
+        stderr_chunks=[],
+    )
+    emitted: list[dict] = []
+    tool = ContainerShellTool()
+
+    result = await tool.execute(
+        context=ToolContext(
+            room=room,
+            caller=object(),
+            caller_context={"item_id": "tool-1"},
+            event_handler=emitted.append,
+        ),
+        commands=["cat /tmp/large.txt"],
+    )
+
+    assert result == {
+        "results": [
+            {
+                "outcome": {"type": "exit", "exit_code": 0},
+                "stdout": "abcdefgh\n\n[output truncated after 8 characters]",
+                "stderr": "",
+            }
+        ]
+    }
+    assert emitted == [
+        {
+            "type": "meshagent.handler.output",
+            "item_id": "tool-1",
+            "lines": [
+                {"source": "stdout", "text": "abcdefgh"},
+                {
+                    "source": "stdout",
+                    "text": "[output truncated after 8 characters]",
+                },
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_container_shell_tool_chunks_long_single_log_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(container_shell_module, "MAX_LOG_LINE_LENGTH", 4)
+    monkeypatch.setattr(container_shell_module, "DEFAULT_MAX_OUTPUT_LENGTH", 32)
+
+    room = _FakeRoom()
+    room.containers.next_exec = _FakeExec(
+        stdout_chunks=[b"abcdef\n"],
+        stderr_chunks=[],
+    )
+    emitted: list[dict] = []
+    tool = ContainerShellTool()
+
+    result = await tool.execute(
+        context=ToolContext(
+            room=room,
+            caller=object(),
+            caller_context={"item_id": "tool-1"},
+            event_handler=emitted.append,
+        ),
+        commands=["cat /tmp/app.js"],
+    )
+
+    assert result == {
+        "results": [
+            {
+                "outcome": {"type": "exit", "exit_code": 0},
+                "stdout": "abcdef\n",
+                "stderr": "",
+            }
+        ]
+    }
+    assert emitted == [
+        {
+            "type": "meshagent.handler.output",
+            "item_id": "tool-1",
+            "lines": [
+                {"source": "stdout", "text": "abcd"},
+                {"source": "stdout", "text": "ef"},
+            ],
+        }
+    ]

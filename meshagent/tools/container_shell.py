@@ -5,6 +5,7 @@ from .toolkit import Toolkit, ToolkitBuilder
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
 from typing import Literal, Optional
 import os
+import codecs
 
 import logging
 import asyncio
@@ -13,11 +14,211 @@ from pydantic import BaseModel
 logger = logging.getLogger("container_shell_tool")
 
 _SHELL_LOG_EVENT_TYPE = "meshagent.handler.output"
+DEFAULT_MAX_OUTPUT_LENGTH = 50 * 1024
+MAX_LOG_LINE_LENGTH = 2048
 
 
 DEFAULT_CONTAINER_MOUNT_SPEC = ContainerMountSpec(
     room=[RoomStorageMountSpec(path="/data")]
 )
+
+
+def _output_truncation_notice(*, max_length: int) -> str:
+    return f"[output truncated after {max_length} characters]"
+
+
+class _BoundedTextResult:
+    def __init__(self, *, max_length: int) -> None:
+        self._max_length = max_length
+        self._parts: list[str] = []
+        self._captured_length = 0
+        self._truncated = False
+
+    def append(self, text: str) -> None:
+        if text == "":
+            return
+
+        if self._captured_length >= self._max_length:
+            self._truncated = True
+            return
+
+        remaining = self._max_length - self._captured_length
+        if len(text) > remaining:
+            self._parts.append(text[:remaining])
+            self._captured_length = self._max_length
+            self._truncated = True
+            return
+
+        self._parts.append(text)
+        self._captured_length += len(text)
+
+    def render(self) -> str:
+        output = "".join(self._parts)
+        if not self._truncated:
+            return output
+
+        notice = _output_truncation_notice(max_length=self._max_length)
+        if output == "":
+            return notice
+
+        return f"{output}\n\n{notice}"
+
+
+class _LiveLogBuffer:
+    def __init__(
+        self,
+        *,
+        context: ToolContext,
+        item_id: str,
+        source: Literal["stdout", "stderr"],
+        max_length: int,
+    ) -> None:
+        self._context = context
+        self._item_id = item_id
+        self._source = source
+        self._max_length = max_length
+        self._remaining = max_length
+        self._buffer = ""
+        self._notice_emitted = False
+
+    def _emit_lines(self, lines: list[str]) -> None:
+        ContainerShellTool._emit_output_lines(
+            context=self._context,
+            item_id=self._item_id,
+            source=self._source,
+            lines=lines,
+        )
+
+    def _append_piece(self, *, lines: list[str], piece: str) -> None:
+        if self._notice_emitted:
+            return
+
+        if self._remaining <= 0:
+            self._notice_emitted = True
+            lines.append(_output_truncation_notice(max_length=self._max_length))
+            return
+
+        if len(piece) <= self._remaining:
+            lines.append(piece)
+            self._remaining -= len(piece)
+            return
+
+        lines.append(piece[: self._remaining])
+        self._remaining = 0
+        self._notice_emitted = True
+        lines.append(_output_truncation_notice(max_length=self._max_length))
+
+    def _drain_available_lines(self) -> None:
+        lines: list[str] = []
+
+        while True:
+            newline_index = self._buffer.find("\n")
+            if newline_index > MAX_LOG_LINE_LENGTH:
+                piece = self._buffer[:MAX_LOG_LINE_LENGTH]
+                self._buffer = self._buffer[MAX_LOG_LINE_LENGTH:]
+                self._append_piece(lines=lines, piece=piece)
+                if self._notice_emitted:
+                    self._buffer = ""
+                    break
+                continue
+
+            if newline_index >= 0:
+                line = self._buffer[:newline_index]
+                if line.endswith("\r"):
+                    line = line[:-1]
+                self._buffer = self._buffer[newline_index + 1 :]
+                self._append_piece(lines=lines, piece=line)
+                if self._notice_emitted:
+                    self._buffer = ""
+                    break
+                continue
+
+            if len(self._buffer) > MAX_LOG_LINE_LENGTH:
+                piece = self._buffer[:MAX_LOG_LINE_LENGTH]
+                self._buffer = self._buffer[MAX_LOG_LINE_LENGTH:]
+                self._append_piece(lines=lines, piece=piece)
+                if self._notice_emitted:
+                    self._buffer = ""
+                    break
+                continue
+
+            break
+
+        self._emit_lines(lines)
+
+    def feed(self, text: str) -> None:
+        if text == "" or self._notice_emitted:
+            return
+
+        self._buffer += text
+        self._drain_available_lines()
+
+    def flush(self) -> None:
+        if self._notice_emitted or self._buffer == "":
+            self._buffer = ""
+            return
+
+        lines: list[str] = []
+        while self._buffer != "":
+            piece = self._buffer[:MAX_LOG_LINE_LENGTH]
+            self._buffer = self._buffer[MAX_LOG_LINE_LENGTH:]
+            self._append_piece(lines=lines, piece=piece)
+            if self._notice_emitted:
+                self._buffer = ""
+                break
+
+        self._emit_lines(lines)
+
+
+class _StreamOutputAccumulator:
+    def __init__(
+        self,
+        *,
+        context: ToolContext,
+        item_id: str,
+        source: Literal["stdout", "stderr"],
+        encoding: str,
+        max_length: int,
+    ) -> None:
+        decoder_factory = codecs.getincrementaldecoder(encoding)
+        self._decoder = decoder_factory(errors="replace")
+        self._result = _BoundedTextResult(max_length=max_length)
+        self._logs = _LiveLogBuffer(
+            context=context,
+            item_id=item_id,
+            source=source,
+            max_length=max_length,
+        )
+        self._finalized = False
+
+    def feed_chunk(self, chunk: bytes | bytearray | memoryview) -> None:
+        if self._finalized:
+            return
+
+        if isinstance(chunk, memoryview):
+            chunk = chunk.tobytes()
+        elif isinstance(chunk, bytearray):
+            chunk = bytes(chunk)
+
+        text = self._decoder.decode(chunk, final=False)
+        if text == "":
+            return
+
+        self._result.append(text)
+        self._logs.feed(text)
+
+    def finish(self) -> str:
+        if self._finalized:
+            return self._result.render()
+
+        tail = self._decoder.decode(b"", final=True)
+        if tail != "":
+            self._result.append(tail)
+            self._logs.feed(tail)
+
+        self._logs.flush()
+        self._finalized = True
+        return self._result.render()
 
 
 class ContainerShellToolConfig(BaseModel):
@@ -126,70 +327,14 @@ class ContainerShellTool(FunctionTool):
             }
         )
 
-    async def _drain_complete_log_lines(
-        self,
-        *,
-        context: ToolContext,
-        item_id: str,
-        source: Literal["stdout", "stderr"],
-        buffer: bytearray,
-        encoding: str,
-    ) -> None:
-        lines: list[str] = []
-        while True:
-            newline_index = buffer.find(b"\n")
-            if newline_index < 0:
-                break
-            raw_line = bytes(buffer[:newline_index])
-            del buffer[: newline_index + 1]
-            lines.append(raw_line.decode(encoding, errors="replace"))
-        self._emit_output_lines(
-            context=context,
-            item_id=item_id,
-            source=source,
-            lines=lines,
-        )
-
-    def _emit_log_remainder(
-        self,
-        *,
-        context: ToolContext,
-        item_id: str,
-        source: Literal["stdout", "stderr"],
-        buffer: bytearray,
-        encoding: str,
-    ) -> None:
-        if len(buffer) == 0:
-            return
-        self._emit_output_lines(
-            context=context,
-            item_id=item_id,
-            source=source,
-            lines=[bytes(buffer).decode(encoding, errors="replace")],
-        )
-        buffer.clear()
-
     async def _collect_output_stream(
         self,
         *,
         stream,
-        context: ToolContext,
-        item_id: str,
-        source: Literal["stdout", "stderr"],
-        total_buffer: bytearray,
-        line_buffer: bytearray,
-        encoding: str,
+        accumulator: _StreamOutputAccumulator,
     ) -> None:
         async for chunk in stream:
-            total_buffer.extend(chunk)
-            line_buffer.extend(chunk)
-            await self._drain_complete_log_lines(
-                context=context,
-                item_id=item_id,
-                source=source,
-                buffer=line_buffer,
-                encoding=encoding,
-            )
+            accumulator.feed_chunk(chunk)
 
     async def execute(
         self,
@@ -209,17 +354,13 @@ class ContainerShellTool(FunctionTool):
         results = []
         encoding = os.device_encoding(1) or "utf-8"
         item_id = self._item_id_from_context(context)
-
-        left = max_output_length
-
-        def limit(s: str):
-            nonlocal left
-            if left is not None:
-                s = s[0:left]
-                left -= len(s)
-                return s
-            else:
-                return s
+        effective_max_output_length = (
+            int(max_output_length)
+            if max_output_length is not None
+            else DEFAULT_MAX_OUTPUT_LENGTH
+        )
+        if effective_max_output_length <= 0:
+            raise ValueError("max_output_length must be greater than 0")
 
         timeout = float(timeout_ms) / 1000.0 if timeout_ms else 20.0
 
@@ -260,10 +401,20 @@ class ContainerShellTool(FunctionTool):
                     tty=False,
                 )
 
-                stdout = bytearray()
-                stderr = bytearray()
-                stdout_lines = bytearray()
-                stderr_lines = bytearray()
+                stdout = _StreamOutputAccumulator(
+                    context=context,
+                    item_id=item_id,
+                    source="stdout",
+                    encoding=encoding,
+                    max_length=effective_max_output_length,
+                )
+                stderr = _StreamOutputAccumulator(
+                    context=context,
+                    item_id=item_id,
+                    source="stderr",
+                    encoding=encoding,
+                    max_length=effective_max_output_length,
+                )
                 stdout_task = None
                 stderr_task = None
 
@@ -272,40 +423,16 @@ class ContainerShellTool(FunctionTool):
                         stdout_task = asyncio.create_task(
                             self._collect_output_stream(
                                 stream=exec.stdout(),
-                                context=context,
-                                item_id=item_id,
-                                source="stdout",
-                                total_buffer=stdout,
-                                line_buffer=stdout_lines,
-                                encoding=encoding,
+                                accumulator=stdout,
                             )
                         )
                         stderr_task = asyncio.create_task(
                             self._collect_output_stream(
                                 stream=exec.stderr(),
-                                context=context,
-                                item_id=item_id,
-                                source="stderr",
-                                total_buffer=stderr,
-                                line_buffer=stderr_lines,
-                                encoding=encoding,
+                                accumulator=stderr,
                             )
                         )
                         await asyncio.gather(stdout_task, stderr_task)
-                        self._emit_log_remainder(
-                            context=context,
-                            item_id=item_id,
-                            source="stdout",
-                            buffer=stdout_lines,
-                            encoding=encoding,
-                        )
-                        self._emit_log_remainder(
-                            context=context,
-                            item_id=item_id,
-                            source="stderr",
-                            buffer=stderr_lines,
-                            encoding=encoding,
-                        )
 
                         exit_code = await exec.result
 
@@ -315,8 +442,8 @@ class ContainerShellTool(FunctionTool):
                                     "type": "exit",
                                     "exit_code": exit_code,
                                 },
-                                "stdout": stdout.decode(),
-                                "stderr": stderr.decode(),
+                                "stdout": stdout.finish(),
+                                "stderr": stderr.finish(),
                             }
                         )
 
@@ -336,26 +463,12 @@ class ContainerShellTool(FunctionTool):
                             ],
                             return_exceptions=True,
                         )
-                    self._emit_log_remainder(
-                        context=context,
-                        item_id=item_id,
-                        source="stdout",
-                        buffer=stdout_lines,
-                        encoding=encoding,
-                    )
-                    self._emit_log_remainder(
-                        context=context,
-                        item_id=item_id,
-                        source="stderr",
-                        buffer=stderr_lines,
-                        encoding=encoding,
-                    )
 
                     results.append(
                         {
                             "outcome": {"type": "timeout"},
-                            "stdout": limit(stdout.decode(encoding, errors="replace")),
-                            "stderr": limit(stderr.decode(encoding, errors="replace")),
+                            "stdout": stdout.finish(),
+                            "stderr": stderr.finish(),
                         }
                     )
                     break
@@ -384,6 +497,8 @@ class ContainerShellTool(FunctionTool):
                             "stderr": f"{ex}",
                         }
                     )
+                    stdout.finish()
+                    stderr.finish()
                     break
 
         except Exception as ex:
