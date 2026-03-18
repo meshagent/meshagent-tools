@@ -362,7 +362,7 @@ class ContainerShellTool(FunctionTool):
         if effective_max_output_length <= 0:
             raise ValueError("max_output_length must be greater than 0")
 
-        timeout = float(timeout_ms) / 1000.0 if timeout_ms else 20.0
+        timeout = float(timeout_ms) / 1000.0 if timeout_ms else 60.0
 
         running = False
 
@@ -448,7 +448,7 @@ class ContainerShellTool(FunctionTool):
                         )
 
                 except asyncio.TimeoutError:
-                    logger.info("The command timed out after %ss", timeout)
+                    logger.warning("The command timed out after %ss", timeout)
                     await exec.kill()
                     if stdout_task is not None:
                         stdout_task.cancel()

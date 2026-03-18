@@ -260,7 +260,7 @@ class ScriptTool(FunctionTool):
                             }
 
                     except asyncio.TimeoutError:
-                        logger.info(f"The command timed out after {timeout}s")
+                        logger.warning(f"The command timed out after {timeout}s")
                         if container_exec is not None:
                             await container_exec.kill()
                         if stdout_task is not None and stderr_task is not None:
@@ -349,7 +349,7 @@ class ScriptTool(FunctionTool):
                     await asyncio.wait_for(proc.wait(), timeout=timeout)
                     await _await_output_tasks(stdout_task, stderr_task)
                 except asyncio.TimeoutError:
-                    logger.info(f"The command timed out after {timeout}s")
+                    logger.warning(f"The command timed out after {timeout}s")
                     if proc is not None:
                         proc.kill()  # send SIGKILL / TerminateProcess
                     if proc is not None:
