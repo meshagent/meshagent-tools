@@ -400,11 +400,8 @@ async def get_script_tools(room: RoomClient):
 
     for service in services:
         if service.metadata.annotations is not None:
-            print("X")
             type = service.metadata.annotations.get("meshagent.tool.type")
-            print(type)
             commands_str = service.metadata.annotations.get("meshagent.tool.commands")
-            print(commands_str)
             tool_name = service.metadata.annotations.get(
                 "meshagent.tool.name", service.metadata.name
             )
@@ -413,7 +410,7 @@ async def get_script_tools(room: RoomClient):
             )
 
             if type == "script" and tool_name is not None:
-                print("FOUND")
+
                 if commands_str is not None:
                     commands = commands_str.split("\n")
 
