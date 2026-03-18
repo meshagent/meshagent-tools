@@ -410,7 +410,6 @@ async def get_script_tools(room: RoomClient):
             )
 
             if type == "script" and tool_name is not None:
-
                 if commands_str is not None:
                     commands = commands_str.split("\n")
 
