@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from collections.abc import AsyncIterable
+import logging
 
 import pytest
 
@@ -16,7 +17,7 @@ from meshagent.api.messaging import (
     unpack_content,
     unpack_content_parts,
 )
-from meshagent.api.room_server_client import ToolContentSpec
+from meshagent.api.room_server_client import RoomException, ToolContentSpec
 from meshagent.tools import ContentTool, FunctionTool, tool
 from meshagent.tools.hosting import RemoteToolkit
 
@@ -191,6 +192,24 @@ class _StrictToggleTool(FunctionTool):
         del context
         del kwargs
         return JsonContent(json={"ok": True})
+
+
+class _FailingTool(FunctionTool):
+    def __init__(self):
+        super().__init__(
+            name="failing_tool",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+                "required": [],
+            },
+        )
+
+    async def execute(self, context, **kwargs):
+        del context
+        del kwargs
+        raise RoomException("messaging is already enabled")
 
 
 @pytest.mark.asyncio
@@ -561,3 +580,38 @@ async def test_remote_toolkit_registration_preserves_strict_tool_metadata() -> N
     assert typ == "room.register_toolkit"
     assert request["tools"]["strict_tool"]["strict"] is True
     assert request["tools"]["loose_tool"]["strict"] is False
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_logs_tool_failures_as_warnings_with_exception_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    room = _FakeRoom()
+    toolkit = RemoteToolkit(name="test", tools=[_FailingTool()], public=True)
+    toolkit._room = room  # type: ignore[assignment]
+
+    with caplog.at_level(logging.WARNING, logger="hosting"):
+        await toolkit._tool_call(
+            protocol=room.protocol,  # type: ignore[arg-type]
+            message_id=50,
+            msg_type="room.tool_call.test",
+            data=pack_message(
+                header={
+                    "name": "failing_tool",
+                    "arguments": JsonContent(json={}).to_json(),
+                    "caller_id": "caller-1",
+                    "tool_call_id": "tc-req-8",
+                }
+            ),
+        )
+
+        await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+
+    response = unpack_content(room.protocol.sent[-1].data)
+    assert isinstance(response, ErrorContent)
+    assert response.text == "messaging is already enabled"
+
+    warning_records = [record for record in caplog.records if record.name == "hosting"]
+    assert len(warning_records) == 1
+    assert warning_records[0].levelno == logging.WARNING
+    assert warning_records[0].message == "messaging is already enabled"

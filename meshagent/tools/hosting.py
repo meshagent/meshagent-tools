@@ -52,6 +52,10 @@ def _error_content_for_exception(ex: Exception) -> ErrorContent:
     return ErrorContent(text=f"{ex}", code=code)
 
 
+def _log_tool_call_failure(ex: Exception) -> None:
+    logger.warning(str(ex), exc_info=ex)
+
+
 async def stream_tool_call(
     *,
     toolkit: Toolkit,
@@ -133,7 +137,7 @@ async def stream_tool_call(
 
         await send_tool_call_response(execution_result)
     except Exception as ex:
-        logger.error("tool call failed", exc_info=ex)
+        _log_tool_call_failure(ex)
         if response_sent:
             if chunk_queue is not None:
                 if isinstance(ex, InvalidToolDataException):
@@ -523,7 +527,7 @@ class RemoteToolkit(Toolkit):
             try:
                 task.result()
             except Exception as e:
-                logger.error("tool call failed", exc_info=e)
+                _log_tool_call_failure(e)
 
         task.add_done_callback(on_done)
 
