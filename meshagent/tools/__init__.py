@@ -36,9 +36,13 @@ from .web_toolkit import (
     WebToolkit,
 )
 from .container_shell import (
+    BaseContainerShellTool,
     ContainerShellToolConfig,
     ContainerShellToolkitBuilder,
     ContainerShellTool,
+    ContainerToolkitConfig,
+    ContainerToolkitBuilder,
+    ContainerToolkit,
 )
 
 from .script import ScriptTool, ScriptToolConfig, ScriptToolkitBuilder
@@ -83,9 +87,13 @@ __all__ = [
     WebGrepTool,
     WebFetchToolkitBuilder,
     WebToolkit,
+    BaseContainerShellTool,
     ContainerShellToolConfig,
     ContainerShellToolkitBuilder,
     ContainerShellTool,
+    ContainerToolkitConfig,
+    ContainerToolkitBuilder,
+    ContainerToolkit,
     ScriptTool,
     ScriptToolConfig,
     ScriptToolkitBuilder,

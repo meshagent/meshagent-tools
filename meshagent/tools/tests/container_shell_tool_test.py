@@ -3,7 +3,12 @@ import asyncio
 import pytest
 
 import meshagent.tools.container_shell as container_shell_module
-from meshagent.tools import ContainerShellTool, ToolContext
+from meshagent.tools import (
+    ContainerShellTool,
+    ContainerToolkit,
+    JsonContent,
+    ToolContext,
+)
 
 
 class _FakeContainer:
@@ -43,26 +48,47 @@ class _FakeExec:
 class _FakeContainers:
     def __init__(self) -> None:
         self._running: list[_FakeContainer] = []
+        self.run_calls: list[dict[str, object]] = []
         self.exec_commands: list[list[str]] = []
+        self.exec_calls: list[dict[str, object]] = []
+        self.stop_calls: list[dict[str, object]] = []
+        self.delete_calls: list[dict[str, object]] = []
+        self._next_container_id = 1
         self.next_exec = _FakeExec(
             stdout_chunks=[b"line 1\npart", b"ial"],
             stderr_chunks=[b"warn 1\n"],
         )
 
-    async def list(self) -> list[_FakeContainer]:
+    async def list(self, all: bool | None = None) -> list[_FakeContainer]:
+        del all
         return [*self._running]
 
     async def run(self, **kwargs) -> str:
-        del kwargs
-        container = _FakeContainer("container-1")
+        self.run_calls.append(kwargs)
+        container = _FakeContainer(f"container-{self._next_container_id}")
+        self._next_container_id += 1
         self._running.append(container)
         return container.id
 
     async def exec(self, *, container_id: str, command, tty: bool):
-        del container_id
-        del tty
         self.exec_commands.append(command)
+        self.exec_calls.append(
+            {
+                "container_id": container_id,
+                "command": command,
+                "tty": tty,
+            }
+        )
         return self.next_exec
+
+    async def stop(self, *, container_id: str, force: bool = False) -> None:
+        self.stop_calls.append({"container_id": container_id, "force": force})
+
+    async def delete(self, *, container_id: str) -> None:
+        self.delete_calls.append({"container_id": container_id})
+        self._running = [
+            container for container in self._running if container.id != container_id
+        ]
 
 
 class _FakeRoom:
@@ -204,3 +230,130 @@ async def test_container_shell_tool_chunks_long_single_log_lines(
             ],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_container_toolkit_manages_container_lifecycle() -> None:
+    room = _FakeRoom()
+    toolkit = ContainerToolkit(
+        working_dir="/workspace",
+        default_image="python:3.13",
+        env={"BASE": "1"},
+    )
+    context = ToolContext(room=room, caller=object())
+
+    start_result = await toolkit.invoke(
+        context=context,
+        name="start_container",
+        input=JsonContent(json={"env": [{"key": "USER", "value": "2"}]}),
+    )
+
+    assert isinstance(start_result, JsonContent)
+    assert start_result.json == {"container_id": "container-1"}
+    assert room.containers.run_calls == [
+        {
+            "command": "sleep infinity",
+            "image": "python:3.13",
+            "working_dir": "/workspace",
+            "mounts": container_shell_module.DEFAULT_CONTAINER_MOUNT_SPEC,
+            "writable_root_fs": True,
+            "env": {"USER": "2", "BASE": "1"},
+        }
+    ]
+
+    list_result = await toolkit.invoke(
+        context=context,
+        name="list_managed_containers",
+        input=JsonContent(json={}),
+    )
+
+    assert isinstance(list_result, JsonContent)
+    assert list_result.json == {
+        "containers": [
+            {
+                "container_id": "container-1",
+                "image": "python:3.13",
+                "working_dir": "/workspace",
+                "mounts": container_shell_module.DEFAULT_CONTAINER_MOUNT_SPEC.model_dump(
+                    mode="json"
+                ),
+                "env": [
+                    {"key": "BASE", "value": "1"},
+                    {"key": "USER", "value": "2"},
+                ],
+            }
+        ]
+    }
+
+    room.containers.next_exec = _FakeExec(
+        stdout_chunks=[b"ok\n"],
+        stderr_chunks=[],
+        exit_code=0,
+    )
+    run_result = await toolkit.invoke(
+        context=context,
+        name="run_in_container",
+        input=JsonContent(
+            json={
+                "container_id": "container-1",
+                "commands": ["echo hi"],
+                "timeout_ms": 500,
+            }
+        ),
+    )
+
+    assert isinstance(run_result, JsonContent)
+    assert run_result.json == {
+        "results": [
+            {
+                "outcome": {"type": "exit", "exit_code": 0},
+                "stdout": "ok\n",
+                "stderr": "",
+            }
+        ]
+    }
+    assert room.containers.exec_calls == [
+        {
+            "container_id": "container-1",
+            "command": ["bash", "-lc", "cd /workspace && echo hi"],
+            "tty": False,
+        }
+    ]
+
+    stop_result = await toolkit.invoke(
+        context=context,
+        name="stop_managed_container",
+        input=JsonContent(json={"container_id": "container-1"}),
+    )
+
+    assert isinstance(stop_result, JsonContent)
+    assert stop_result.json == {"container_id": "container-1", "ok": True}
+    assert room.containers.stop_calls == [
+        {"container_id": "container-1", "force": True}
+    ]
+    assert room.containers.delete_calls == [{"container_id": "container-1"}]
+
+    final_list_result = await toolkit.invoke(
+        context=context,
+        name="list_managed_containers",
+        input=JsonContent(json={}),
+    )
+
+    assert isinstance(final_list_result, JsonContent)
+    assert final_list_result.json == {"containers": []}
+
+
+@pytest.mark.asyncio
+async def test_container_toolkit_rejects_unmanaged_containers() -> None:
+    room = _FakeRoom()
+    toolkit = ContainerToolkit(default_image="python:3.13")
+    context = ToolContext(room=room, caller=object())
+
+    with pytest.raises(Exception, match="not managed by this toolkit"):
+        await toolkit.invoke(
+            context=context,
+            name="run_in_container",
+            input=JsonContent(
+                json={"container_id": "container-404", "commands": ["echo hi"]}
+            ),
+        )

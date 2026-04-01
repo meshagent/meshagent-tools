@@ -1,21 +1,30 @@
-from meshagent.api import RoomClient
-from .tool import ToolContext, FunctionTool
-from .toolkit import Toolkit, ToolkitBuilder
+from __future__ import annotations
 
-from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
-from typing import Literal, Optional
-import os
-import codecs
-
-import logging
 import asyncio
-from pydantic import BaseModel
+import logging
+import os
+import shlex
+from dataclasses import dataclass
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from meshagent.api import RoomClient, RoomException, ToolContentSpec
+from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
+from meshagent.tools.strict_schema import ensure_strict_json_schema
+
+from ._shell_output import (
+    DEFAULT_MAX_LOG_LINE_LENGTH,
+    StreamOutputAccumulator,
+    collect_output_stream,
+)
+from .tool import FunctionTool, ToolContext
+from .toolkit import Toolkit, ToolkitBuilder
 
 logger = logging.getLogger("container_shell_tool")
 
-_SHELL_LOG_EVENT_TYPE = "meshagent.handler.output"
 DEFAULT_MAX_OUTPUT_LENGTH = 50 * 1024
-MAX_LOG_LINE_LENGTH = 2048
+MAX_LOG_LINE_LENGTH = DEFAULT_MAX_LOG_LINE_LENGTH
 
 
 DEFAULT_CONTAINER_MOUNT_SPEC = ContainerMountSpec(
@@ -23,202 +32,487 @@ DEFAULT_CONTAINER_MOUNT_SPEC = ContainerMountSpec(
 )
 
 
-def _output_truncation_notice(*, max_length: int) -> str:
-    return f"[output truncated after {max_length} characters]"
+class _ContainerShellInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    commands: list[str] = Field(min_length=1)
+    max_output_length: int | None = None
+    timeout_ms: int | None = None
 
 
-class _BoundedTextResult:
-    def __init__(self, *, max_length: int) -> None:
-        self._max_length = max_length
-        self._parts: list[str] = []
-        self._captured_length = 0
-        self._truncated = False
-
-    def append(self, text: str) -> None:
-        if text == "":
-            return
-
-        if self._captured_length >= self._max_length:
-            self._truncated = True
-            return
-
-        remaining = self._max_length - self._captured_length
-        if len(text) > remaining:
-            self._parts.append(text[:remaining])
-            self._captured_length = self._max_length
-            self._truncated = True
-            return
-
-        self._parts.append(text)
-        self._captured_length += len(text)
-
-    def render(self) -> str:
-        output = "".join(self._parts)
-        if not self._truncated:
-            return output
-
-        notice = _output_truncation_notice(max_length=self._max_length)
-        if output == "":
-            return notice
-
-        return f"{output}\n\n{notice}"
+class _ManagedContainerShellInput(_ContainerShellInput):
+    container_id: str = Field(min_length=1)
 
 
-class _LiveLogBuffer:
+class _ShellCommandOutcome(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["exit", "timeout"]
+    exit_code: int | None = None
+
+
+class _ShellCommandResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    outcome: _ShellCommandOutcome
+    stdout: str
+    stderr: str
+
+
+class _ShellExecutionOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    results: list[_ShellCommandResult]
+
+
+class ContainerEnvVar(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: str = Field(min_length=1)
+    value: str
+
+
+class _StartManagedContainerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    image: str | None = None
+    mounts: ContainerMountSpec | None = None
+    env: list[ContainerEnvVar] | None = None
+    working_dir: str | None = None
+
+
+class _ManagedContainerSelector(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    container_id: str = Field(min_length=1)
+
+
+class _ManagedContainerSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    container_id: str
+    image: str
+    working_dir: str | None = None
+    mounts: ContainerMountSpec | None = None
+    env: list[ContainerEnvVar] = Field(default_factory=list)
+
+
+class _ListManagedContainersOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    containers: list[_ManagedContainerSummary]
+
+
+class _StartManagedContainerOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    container_id: str
+
+
+class _StopManagedContainerOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    container_id: str
+    ok: bool = True
+
+
+def _strict_model_schema(model_type: type[BaseModel]) -> dict:
+    return ensure_strict_json_schema(model_type.model_json_schema())
+
+
+def _json_output_spec(model_type: type[BaseModel]) -> ToolContentSpec:
+    return ToolContentSpec(
+        types=["json"],
+        stream=False,
+        schema=_strict_model_schema(model_type),
+    )
+
+
+def _item_id_from_context(context: ToolContext) -> str:
+    caller_context = context.caller_context
+    if caller_context is None:
+        return ""
+
+    item_id = caller_context.get("item_id")
+    if isinstance(item_id, str):
+        return item_id
+    return ""
+
+
+async def _await_output_tasks(*tasks: asyncio.Task[None] | None) -> None:
+    pending = [task for task in tasks if task is not None]
+    if len(pending) == 0:
+        return
+
+    results = await asyncio.gather(*pending, return_exceptions=True)
+    for result in results:
+        if isinstance(result, Exception) and not isinstance(
+            result, asyncio.CancelledError
+        ):
+            logger.debug("container shell output stream task failed", exc_info=result)
+
+
+def _normalize_optional_string(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized == "":
+        return None
+    return normalized
+
+
+def _merge_container_mounts(
+    *,
+    defaults: ContainerMountSpec | None,
+    overrides: ContainerMountSpec | None,
+) -> ContainerMountSpec | None:
+    if defaults is None and overrides is None:
+        return None
+    if defaults is None:
+        return overrides.model_copy(deep=True)
+    if overrides is None:
+        return defaults.model_copy(deep=True)
+
+    room_mounts = [*(defaults.room or []), *(overrides.room or [])]
+    project_mounts = [*(defaults.project or []), *(overrides.project or [])]
+    image_mounts = [*(defaults.images or []), *(overrides.images or [])]
+    file_mounts = [*(defaults.files or []), *(overrides.files or [])]
+    empty_dir_mounts = [*(defaults.empty_dirs or []), *(overrides.empty_dirs or [])]
+
+    return ContainerMountSpec(
+        room=room_mounts or None,
+        project=project_mounts or None,
+        images=image_mounts or None,
+        files=file_mounts or None,
+        empty_dirs=empty_dir_mounts or None,
+    )
+
+
+def _container_env_dict(
+    *,
+    defaults: dict[str, str] | None,
+    entries: list[ContainerEnvVar] | None,
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    if defaults is not None:
+        for key, value in defaults.items():
+            result[key] = value
+    if entries is not None:
+        for entry in entries:
+            result[entry.key] = entry.value
+
+    return result
+
+
+def _container_env_entries(env: dict[str, str]) -> list[ContainerEnvVar]:
+    return [
+        ContainerEnvVar(key=key, value=value)
+        for key, value in sorted(env.items(), key=lambda item: item[0])
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class _ManagedContainerRecord:
+    container_id: str
+    image: str
+    working_dir: str | None
+    mounts: ContainerMountSpec | None
+    env: dict[str, str]
+
+
+class _ManagedContainerManager:
     def __init__(
         self,
         *,
-        context: ToolContext,
-        item_id: str,
-        source: Literal["stdout", "stderr"],
-        max_length: int,
+        default_image: str | None = "python:3.13",
+        default_mounts: ContainerMountSpec | None = DEFAULT_CONTAINER_MOUNT_SPEC,
+        default_env: dict[str, str] | None = None,
+        default_working_dir: str | None = None,
     ) -> None:
-        self._context = context
-        self._item_id = item_id
-        self._source = source
-        self._max_length = max_length
-        self._remaining = max_length
-        self._buffer = ""
-        self._notice_emitted = False
+        self.default_image = default_image
+        self.default_mounts = (
+            default_mounts.model_copy(deep=True) if default_mounts is not None else None
+        )
+        self.default_env = dict(default_env) if default_env is not None else {}
+        self.default_working_dir = default_working_dir
+        self._containers: dict[str, _ManagedContainerRecord] = {}
+        self._lock = asyncio.Lock()
 
-    def _emit_lines(self, lines: list[str]) -> None:
-        ContainerShellTool._emit_output_lines(
-            context=self._context,
-            item_id=self._item_id,
-            source=self._source,
-            lines=lines,
+    async def list_containers(self) -> list[_ManagedContainerRecord]:
+        async with self._lock:
+            return [
+                self._containers[container_id]
+                for container_id in sorted(self._containers.keys())
+            ]
+
+    async def require_container(self, *, container_id: str) -> _ManagedContainerRecord:
+        async with self._lock:
+            record = self._containers.get(container_id)
+        if record is None:
+            raise RoomException(
+                f"container is not managed by this toolkit: {container_id}"
+            )
+        return record
+
+    async def start_container(
+        self,
+        *,
+        room: RoomClient,
+        image: str | None,
+        mounts: ContainerMountSpec | None,
+        env: list[ContainerEnvVar] | None,
+        working_dir: str | None,
+    ) -> str:
+        resolved_image = _normalize_optional_string(
+            image
+        ) or _normalize_optional_string(self.default_image)
+        if resolved_image is None:
+            raise RoomException("start_container requires an image")
+
+        resolved_mounts = _merge_container_mounts(
+            defaults=self.default_mounts,
+            overrides=mounts,
+        )
+        resolved_env = _container_env_dict(defaults=self.default_env, entries=env)
+        resolved_working_dir = _normalize_optional_string(
+            working_dir
+        ) or _normalize_optional_string(self.default_working_dir)
+
+        container_id = await room.containers.run(
+            command="sleep infinity",
+            image=resolved_image,
+            working_dir=resolved_working_dir,
+            mounts=resolved_mounts,
+            writable_root_fs=True,
+            env=resolved_env,
         )
 
-    def _append_piece(self, *, lines: list[str], piece: str) -> None:
-        if self._notice_emitted:
-            return
+        record = _ManagedContainerRecord(
+            container_id=container_id,
+            image=resolved_image,
+            working_dir=resolved_working_dir,
+            mounts=resolved_mounts.model_copy(deep=True)
+            if resolved_mounts is not None
+            else None,
+            env=dict(resolved_env),
+        )
+        async with self._lock:
+            self._containers[container_id] = record
+        return container_id
 
-        if self._remaining <= 0:
-            self._notice_emitted = True
-            lines.append(_output_truncation_notice(max_length=self._max_length))
-            return
+    async def stop_container(self, *, room: RoomClient, container_id: str) -> None:
+        await self.require_container(container_id=container_id)
 
-        if len(piece) <= self._remaining:
-            lines.append(piece)
-            self._remaining -= len(piece)
-            return
+        try:
+            await room.containers.stop(container_id=container_id, force=True)
+        except Exception:
+            logger.info(
+                "failed to stop managed container %s before delete",
+                container_id,
+                exc_info=True,
+            )
 
-        lines.append(piece[: self._remaining])
-        self._remaining = 0
-        self._notice_emitted = True
-        lines.append(_output_truncation_notice(max_length=self._max_length))
+        await room.containers.delete(container_id=container_id)
+        async with self._lock:
+            self._containers.pop(container_id, None)
 
-    def _drain_available_lines(self) -> None:
-        lines: list[str] = []
-
-        while True:
-            newline_index = self._buffer.find("\n")
-            if newline_index > MAX_LOG_LINE_LENGTH:
-                piece = self._buffer[:MAX_LOG_LINE_LENGTH]
-                self._buffer = self._buffer[MAX_LOG_LINE_LENGTH:]
-                self._append_piece(lines=lines, piece=piece)
-                if self._notice_emitted:
-                    self._buffer = ""
-                    break
-                continue
-
-            if newline_index >= 0:
-                line = self._buffer[:newline_index]
-                if line.endswith("\r"):
-                    line = line[:-1]
-                self._buffer = self._buffer[newline_index + 1 :]
-                self._append_piece(lines=lines, piece=line)
-                if self._notice_emitted:
-                    self._buffer = ""
-                    break
-                continue
-
-            if len(self._buffer) > MAX_LOG_LINE_LENGTH:
-                piece = self._buffer[:MAX_LOG_LINE_LENGTH]
-                self._buffer = self._buffer[MAX_LOG_LINE_LENGTH:]
-                self._append_piece(lines=lines, piece=piece)
-                if self._notice_emitted:
-                    self._buffer = ""
-                    break
-                continue
-
-            break
-
-        self._emit_lines(lines)
-
-    def feed(self, text: str) -> None:
-        if text == "" or self._notice_emitted:
-            return
-
-        self._buffer += text
-        self._drain_available_lines()
-
-    def flush(self) -> None:
-        if self._notice_emitted or self._buffer == "":
-            self._buffer = ""
-            return
-
-        lines: list[str] = []
-        while self._buffer != "":
-            piece = self._buffer[:MAX_LOG_LINE_LENGTH]
-            self._buffer = self._buffer[MAX_LOG_LINE_LENGTH:]
-            self._append_piece(lines=lines, piece=piece)
-            if self._notice_emitted:
-                self._buffer = ""
-                break
-
-        self._emit_lines(lines)
+    async def stop_all(self, *, room: RoomClient) -> None:
+        for record in await self.list_containers():
+            try:
+                await self.stop_container(room=room, container_id=record.container_id)
+            except Exception:
+                logger.warning(
+                    "failed to clean up managed container %s",
+                    record.container_id,
+                    exc_info=True,
+                )
 
 
-class _StreamOutputAccumulator:
+class BaseContainerShellTool(FunctionTool):
     def __init__(
         self,
         *,
-        context: ToolContext,
-        item_id: str,
-        source: Literal["stdout", "stderr"],
-        encoding: str,
-        max_length: int,
+        name: str,
+        input_model: type[BaseModel],
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        working_dir: Optional[str] = None,
     ) -> None:
-        decoder_factory = codecs.getincrementaldecoder(encoding)
-        self._decoder = decoder_factory(errors="replace")
-        self._result = _BoundedTextResult(max_length=max_length)
-        self._logs = _LiveLogBuffer(
-            context=context,
-            item_id=item_id,
-            source=source,
-            max_length=max_length,
+        self.working_dir = working_dir
+        self._input_model = input_model
+
+        super().__init__(
+            name=name,
+            description=description
+            or "execute shell commands in a container and return the result",
+            title=title,
+            input_schema=_strict_model_schema(input_model),
+            output_spec=_json_output_spec(_ShellExecutionOutput),
         )
-        self._finalized = False
 
-    def feed_chunk(self, chunk: bytes | bytearray | memoryview) -> None:
-        if self._finalized:
-            return
+    async def get_container_id(
+        self,
+        context: ToolContext,
+        *,
+        container_id: str | None = None,
+    ) -> str:
+        raise NotImplementedError
 
-        if isinstance(chunk, memoryview):
-            chunk = chunk.tobytes()
-        elif isinstance(chunk, bytearray):
-            chunk = bytes(chunk)
+    async def get_working_dir(
+        self,
+        context: ToolContext,
+        *,
+        container_id: str,
+    ) -> str | None:
+        del context
+        del container_id
+        return self.working_dir
 
-        text = self._decoder.decode(chunk, final=False)
-        if text == "":
-            return
+    async def execute(
+        self,
+        context: ToolContext,
+        *,
+        commands: list[str],
+        max_output_length: int | None = None,
+        timeout_ms: int | None = None,
+        container_id: str | None = None,
+    ) -> dict[str, list[dict[str, object]]]:
+        payload: dict[str, object] = {
+            "commands": commands,
+            "max_output_length": max_output_length,
+            "timeout_ms": timeout_ms,
+        }
+        if issubclass(self._input_model, _ManagedContainerShellInput):
+            payload["container_id"] = container_id
 
-        self._result.append(text)
-        self._logs.feed(text)
+        parsed = self._input_model.model_validate(payload)
 
-    def finish(self) -> str:
-        if self._finalized:
-            return self._result.render()
+        parsed_container_id: str | None = None
+        if isinstance(parsed, _ManagedContainerShellInput):
+            parsed_container_id = parsed.container_id
 
-        tail = self._decoder.decode(b"", final=True)
-        if tail != "":
-            self._result.append(tail)
-            self._logs.feed(tail)
+        effective_max_output_length = (
+            parsed.max_output_length
+            if parsed.max_output_length is not None
+            else DEFAULT_MAX_OUTPUT_LENGTH
+        )
+        if effective_max_output_length <= 0:
+            raise ValueError("max_output_length must be greater than 0")
 
-        self._logs.flush()
-        self._finalized = True
-        return self._result.render()
+        timeout = float(parsed.timeout_ms) / 1000.0 if parsed.timeout_ms else 60.0
+        active_container_id = await self.get_container_id(
+            context,
+            container_id=parsed_container_id,
+        )
+        command_working_dir = await self.get_working_dir(
+            context,
+            container_id=active_container_id,
+        )
+
+        results: list[dict[str, object]] = []
+        encoding = os.device_encoding(1) or "utf-8"
+        item_id = _item_id_from_context(context)
+
+        try:
+            logger.info(
+                "executing shell commands in container %s with timeout %s: %s",
+                active_container_id,
+                timeout,
+                parsed.commands,
+            )
+
+            for command in parsed.commands:
+                command_to_run = command
+                if command_working_dir is not None:
+                    command_to_run = (
+                        f"cd {shlex.quote(command_working_dir)} && {command}"
+                    )
+
+                container_exec = await context.room.containers.exec(
+                    container_id=active_container_id,
+                    command=["bash", "-lc", command_to_run],
+                    tty=False,
+                )
+
+                stdout = StreamOutputAccumulator(
+                    context=context,
+                    item_id=item_id,
+                    source="stdout",
+                    encoding=encoding,
+                    max_length=effective_max_output_length,
+                    max_log_line_length=MAX_LOG_LINE_LENGTH,
+                )
+                stderr = StreamOutputAccumulator(
+                    context=context,
+                    item_id=item_id,
+                    source="stderr",
+                    encoding=encoding,
+                    max_length=effective_max_output_length,
+                    max_log_line_length=MAX_LOG_LINE_LENGTH,
+                )
+                stdout_task: asyncio.Task[None] | None = None
+                stderr_task: asyncio.Task[None] | None = None
+
+                try:
+                    async with asyncio.timeout(timeout):
+                        stdout_task = asyncio.create_task(
+                            collect_output_stream(
+                                stream=container_exec.stdout(),
+                                accumulator=stdout,
+                            )
+                        )
+                        stderr_task = asyncio.create_task(
+                            collect_output_stream(
+                                stream=container_exec.stderr(),
+                                accumulator=stderr,
+                            )
+                        )
+                        await _await_output_tasks(stdout_task, stderr_task)
+
+                        exit_code = await container_exec.result
+                        results.append(
+                            {
+                                "outcome": {
+                                    "type": "exit",
+                                    "exit_code": exit_code,
+                                },
+                                "stdout": stdout.finish(),
+                                "stderr": stderr.finish(),
+                            }
+                        )
+                except asyncio.TimeoutError:
+                    logger.warning("the command timed out after %ss", timeout)
+                    await container_exec.kill()
+                    if stdout_task is not None:
+                        stdout_task.cancel()
+                    if stderr_task is not None:
+                        stderr_task.cancel()
+                    await _await_output_tasks(stdout_task, stderr_task)
+
+                    results.append(
+                        {
+                            "outcome": {"type": "timeout"},
+                            "stdout": stdout.finish(),
+                            "stderr": stderr.finish(),
+                        }
+                    )
+                    break
+                except Exception as exc:
+                    if stdout_task is not None:
+                        stdout_task.cancel()
+                    if stderr_task is not None:
+                        stderr_task.cancel()
+                    await _await_output_tasks(stdout_task, stderr_task)
+
+                    stdout.finish()
+                    stderr.finish()
+                    results.append(
+                        {
+                            "outcome": {"type": "exit", "exit_code": 1},
+                            "stdout": "",
+                            "stderr": str(exc),
+                        }
+                    )
+                    break
+        except Exception as exc:
+            results.append(
+                {
+                    "outcome": {"type": "exit", "exit_code": 1},
+                    "stdout": "",
+                    "stderr": str(exc),
+                }
+            )
+
+        return {"results": results}
 
 
 class ContainerShellToolConfig(BaseModel):
@@ -234,17 +528,23 @@ class ContainerShellToolkitBuilder(ToolkitBuilder):
         image: Optional[str] = "python:3.13",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
-    ):
+    ) -> None:
         super().__init__(name=name, type=ContainerShellToolConfig)
-
         self.working_dir = working_dir
         self.image = image
         self.mounts = mounts
         self.env = env
 
     async def make(
-        self, *, room: RoomClient, model: str, config: ContainerShellToolConfig
+        self,
+        *,
+        room: RoomClient,
+        model: str,
+        config: ContainerShellToolConfig,
     ) -> Toolkit:
+        del room
+        del model
+        del config
         return Toolkit(
             name=self.name,
             tools=[
@@ -259,7 +559,7 @@ class ContainerShellToolkitBuilder(ToolkitBuilder):
         )
 
 
-class ContainerShellTool(FunctionTool):
+class ContainerShellTool(BaseContainerShellTool):
     def __init__(
         self,
         *,
@@ -270,108 +570,38 @@ class ContainerShellTool(FunctionTool):
         image: Optional[str] = "python:3.13",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
-    ):
-        self.working_dir = working_dir
+    ) -> None:
         self.image = image
         self.mounts = mounts
-        self._container_id = None
         self.env = env
+        self._container_id: str | None = None
 
         super().__init__(
             name=name,
-            description=description
-            or "execute shell commands in a container and return the result",
+            input_model=_ContainerShellInput,
+            description=description,
             title=title,
-            input_schema={
-                "type": "object",
-                "required": ["commands"],
-                "additionalProperties": False,
-                "properties": {
-                    "commands": {"type": "array", "items": {"type": "string"}},
-                    "max_output_length": {"type": "integer"},
-                    "timeout_ms": {"type": "integer"},
-                },
-            },
+            working_dir=working_dir,
         )
 
-    @staticmethod
-    def _item_id_from_context(context: ToolContext) -> str:
-        caller_context = context.caller_context
-        if isinstance(caller_context, dict):
-            item_id = caller_context.get("item_id")
-            if isinstance(item_id, str):
-                return item_id
-        return ""
-
-    @staticmethod
-    def _emit_output_lines(
-        *,
-        context: ToolContext,
-        item_id: str,
-        source: Literal["stdout", "stderr"],
-        lines: list[str],
-    ) -> None:
-        if item_id == "" or len(lines) == 0:
-            return
-        context.emit(
-            {
-                "type": _SHELL_LOG_EVENT_TYPE,
-                "item_id": item_id,
-                "lines": [
-                    {
-                        "source": source,
-                        "text": line,
-                    }
-                    for line in lines
-                ],
-            }
-        )
-
-    async def _collect_output_stream(
-        self,
-        *,
-        stream,
-        accumulator: _StreamOutputAccumulator,
-    ) -> None:
-        async for chunk in stream:
-            accumulator.feed_chunk(chunk)
-
-    async def execute(
+    async def get_container_id(
         self,
         context: ToolContext,
-        **kwargs,
-    ):
-        commands = kwargs.get("commands") or []
-        max_output_length = kwargs.get("max_output_length")
-        timeout_ms = kwargs.get("timeout_ms")
-
-        if not commands:
-            raise Exception("commands is required")
-
+        *,
+        container_id: str | None = None,
+    ) -> str:
+        del container_id
         if self.image is None:
-            raise Exception("container_shell requires an image")
+            raise RoomException("container_shell requires an image")
 
-        results = []
-        encoding = os.device_encoding(1) or "utf-8"
-        item_id = self._item_id_from_context(context)
-        effective_max_output_length = (
-            int(max_output_length)
-            if max_output_length is not None
-            else DEFAULT_MAX_OUTPUT_LENGTH
-        )
-        if effective_max_output_length <= 0:
-            raise ValueError("max_output_length must be greater than 0")
+        is_running = False
+        if self._container_id is not None:
+            for container in await context.room.containers.list():
+                if container.id == self._container_id:
+                    is_running = True
+                    break
 
-        timeout = float(timeout_ms) / 1000.0 if timeout_ms else 60.0
-
-        running = False
-
-        if self._container_id:
-            for c in await context.room.containers.list():
-                if c.id == self._container_id:
-                    running = True
-
-        if not running:
+        if not is_running:
             self._container_id = await context.room.containers.run(
                 command="sleep infinity",
                 image=self.image,
@@ -380,137 +610,213 @@ class ContainerShellTool(FunctionTool):
                 env=self.env,
             )
 
-        container_id = self._container_id
+        return self._container_id
 
-        try:
-            logger.info(
-                "executing shell commands in container %s with timeout %s: %s",
-                container_id,
-                timeout,
-                commands,
-            )
-            import shlex
 
-            for command in commands:
-                command_to_run = command
-                if self.working_dir:
-                    command_to_run = f"cd {shlex.quote(self.working_dir)} && {command}"
-                exec = await context.room.containers.exec(
-                    container_id=container_id,
-                    command=["bash", "-lc", command_to_run],
-                    tty=False,
-                )
+class ContainerToolkitConfig(BaseModel):
+    name: Literal["container"] = "container"
 
-                stdout = _StreamOutputAccumulator(
-                    context=context,
-                    item_id=item_id,
-                    source="stdout",
-                    encoding=encoding,
-                    max_length=effective_max_output_length,
-                )
-                stderr = _StreamOutputAccumulator(
-                    context=context,
-                    item_id=item_id,
-                    source="stderr",
-                    encoding=encoding,
-                    max_length=effective_max_output_length,
-                )
-                stdout_task = None
-                stderr_task = None
 
-                try:
-                    async with asyncio.timeout(timeout):
-                        stdout_task = asyncio.create_task(
-                            self._collect_output_stream(
-                                stream=exec.stdout(),
-                                accumulator=stdout,
-                            )
-                        )
-                        stderr_task = asyncio.create_task(
-                            self._collect_output_stream(
-                                stream=exec.stderr(),
-                                accumulator=stderr,
-                            )
-                        )
-                        await asyncio.gather(stdout_task, stderr_task)
+class ContainerToolkitBuilder(ToolkitBuilder):
+    def __init__(
+        self,
+        *,
+        name: str = "container",
+        working_dir: Optional[str] = None,
+        image: Optional[str] = "python:3.13",
+        mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
+        env: Optional[dict[str, str]] = None,
+    ) -> None:
+        super().__init__(name=name, type=ContainerToolkitConfig)
+        self.working_dir = working_dir
+        self.image = image
+        self.mounts = mounts
+        self.env = env
 
-                        exit_code = await exec.result
+    async def make(
+        self,
+        *,
+        room: RoomClient,
+        model: str,
+        config: ContainerToolkitConfig,
+    ) -> Toolkit:
+        del room
+        del model
+        del config
+        return ContainerToolkit(
+            name=self.name,
+            working_dir=self.working_dir,
+            default_image=self.image,
+            mounts=self.mounts,
+            env=self.env,
+        )
 
-                        results.append(
-                            {
-                                "outcome": {
-                                    "type": "exit",
-                                    "exit_code": exit_code,
-                                },
-                                "stdout": stdout.finish(),
-                                "stderr": stderr.finish(),
-                            }
-                        )
 
-                except asyncio.TimeoutError:
-                    logger.warning("The command timed out after %ss", timeout)
-                    await exec.kill()
-                    if stdout_task is not None:
-                        stdout_task.cancel()
-                    if stderr_task is not None:
-                        stderr_task.cancel()
-                    if stdout_task is not None or stderr_task is not None:
-                        await asyncio.gather(
-                            *[
-                                task
-                                for task in (stdout_task, stderr_task)
-                                if task is not None
-                            ],
-                            return_exceptions=True,
-                        )
+class _ListManagedContainersTool(FunctionTool):
+    def __init__(self, *, manager: _ManagedContainerManager) -> None:
+        self._manager = manager
+        super().__init__(
+            name="list_managed_containers",
+            title="list managed containers",
+            description="list the containers currently managed by this toolkit",
+            input_schema={
+                "type": "object",
+                "required": [],
+                "additionalProperties": False,
+                "properties": {},
+            },
+            output_spec=_json_output_spec(_ListManagedContainersOutput),
+        )
 
-                    results.append(
-                        {
-                            "outcome": {"type": "timeout"},
-                            "stdout": stdout.finish(),
-                            "stderr": stderr.finish(),
-                        }
-                    )
-                    break
+    async def execute(self, context: ToolContext) -> dict[str, list[dict[str, object]]]:
+        del context
+        containers = [
+            _ManagedContainerSummary(
+                container_id=record.container_id,
+                image=record.image,
+                working_dir=record.working_dir,
+                mounts=record.mounts.model_copy(deep=True)
+                if record.mounts is not None
+                else None,
+                env=_container_env_entries(record.env),
+            ).model_dump(mode="json")
+            for record in await self._manager.list_containers()
+        ]
+        return {"containers": containers}
 
-                except Exception as ex:
-                    if stdout_task is not None:
-                        stdout_task.cancel()
-                    if stderr_task is not None:
-                        stderr_task.cancel()
-                    if stdout_task is not None or stderr_task is not None:
-                        await asyncio.gather(
-                            *[
-                                task
-                                for task in (stdout_task, stderr_task)
-                                if task is not None
-                            ],
-                            return_exceptions=True,
-                        )
-                    results.append(
-                        {
-                            "outcome": {
-                                "type": "exit",
-                                "exit_code": 1,
-                            },
-                            "stdout": "",
-                            "stderr": f"{ex}",
-                        }
-                    )
-                    stdout.finish()
-                    stderr.finish()
-                    break
 
-        except Exception as ex:
-            results.append(
-                {
-                    "outcome": {
-                        "type": "exit",
-                        "exit_code": 1,
-                    },
-                    "stdout": "",
-                    "stderr": f"{ex}",
-                }
-            )
+class _StartManagedContainerTool(FunctionTool):
+    def __init__(self, *, manager: _ManagedContainerManager) -> None:
+        self._manager = manager
+        super().__init__(
+            name="start_container",
+            title="start container",
+            description="start a new shell container and add it to this toolkit",
+            input_schema=_strict_model_schema(_StartManagedContainerInput),
+            output_spec=_json_output_spec(_StartManagedContainerOutput),
+        )
 
-        return {"results": results}
+    async def execute(
+        self,
+        context: ToolContext,
+        *,
+        image: str | None = None,
+        mounts: ContainerMountSpec | None = None,
+        env: list[ContainerEnvVar] | None = None,
+        working_dir: str | None = None,
+    ) -> dict[str, str]:
+        parsed = _StartManagedContainerInput.model_validate(
+            {
+                "image": image,
+                "mounts": mounts,
+                "env": env,
+                "working_dir": working_dir,
+            }
+        )
+        container_id = await self._manager.start_container(
+            room=context.room,
+            image=parsed.image,
+            mounts=parsed.mounts,
+            env=parsed.env,
+            working_dir=parsed.working_dir,
+        )
+        return {"container_id": container_id}
+
+
+class _StopManagedContainerTool(FunctionTool):
+    def __init__(self, *, manager: _ManagedContainerManager) -> None:
+        self._manager = manager
+        super().__init__(
+            name="stop_managed_container",
+            title="stop managed container",
+            description="stop and delete a container managed by this toolkit",
+            input_schema=_strict_model_schema(_ManagedContainerSelector),
+            output_spec=_json_output_spec(_StopManagedContainerOutput),
+        )
+
+    async def execute(
+        self,
+        context: ToolContext,
+        *,
+        container_id: str,
+    ) -> dict[str, object]:
+        parsed = _ManagedContainerSelector.model_validate(
+            {"container_id": container_id}
+        )
+        await self._manager.stop_container(
+            room=context.room,
+            container_id=parsed.container_id,
+        )
+        return {"container_id": parsed.container_id, "ok": True}
+
+
+class _RunInContainerTool(BaseContainerShellTool):
+    def __init__(self, *, manager: _ManagedContainerManager) -> None:
+        self._manager = manager
+        super().__init__(
+            name="run_in_container",
+            input_model=_ManagedContainerShellInput,
+            title="run in container",
+            description=(
+                "execute shell commands in a container managed by this toolkit"
+            ),
+        )
+
+    async def get_container_id(
+        self,
+        context: ToolContext,
+        *,
+        container_id: str | None = None,
+    ) -> str:
+        del context
+        if container_id is None:
+            raise RoomException("container_id is required")
+        record = await self._manager.require_container(container_id=container_id)
+        return record.container_id
+
+    async def get_working_dir(
+        self,
+        context: ToolContext,
+        *,
+        container_id: str,
+    ) -> str | None:
+        del context
+        record = await self._manager.require_container(container_id=container_id)
+        return record.working_dir
+
+
+class ContainerToolkit(Toolkit):
+    def __init__(
+        self,
+        *,
+        name: str = "container",
+        working_dir: Optional[str] = None,
+        default_image: Optional[str] = "python:3.13",
+        mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
+        env: Optional[dict[str, str]] = None,
+    ) -> None:
+        self.default_image = default_image
+        self.default_mounts = (
+            mounts.model_copy(deep=True) if mounts is not None else None
+        )
+        self.default_env = dict(env) if env is not None else {}
+        self.default_working_dir = working_dir
+        self._manager = _ManagedContainerManager(
+            default_image=default_image,
+            default_mounts=mounts,
+            default_env=env,
+            default_working_dir=working_dir,
+        )
+
+        super().__init__(
+            name=name,
+            tools=[
+                _ListManagedContainersTool(manager=self._manager),
+                _StartManagedContainerTool(manager=self._manager),
+                _StopManagedContainerTool(manager=self._manager),
+                _RunInContainerTool(manager=self._manager),
+            ],
+        )
+
+    async def stop_all(self, *, room: RoomClient) -> None:
+        await self._manager.stop_all(room=room)
