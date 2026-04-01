@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import shlex
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -128,6 +129,19 @@ def _item_id_from_context(context: ToolContext) -> str:
     return ""
 
 
+async def _stream_reader_chunks(
+    reader: asyncio.StreamReader | None,
+) -> AsyncIterable[bytes]:
+    if reader is None:
+        return
+
+    while True:
+        chunk = await reader.read(4096)
+        if chunk == b"":
+            break
+        yield chunk
+
+
 async def _await_output_tasks(*tasks: asyncio.Task[None] | None) -> None:
     pending = [task for task in tasks if task is not None]
     if len(pending) == 0:
@@ -198,6 +212,43 @@ def _container_env_entries(env: dict[str, str]) -> list[ContainerEnvVar]:
         ContainerEnvVar(key=key, value=value)
         for key, value in sorted(env.items(), key=lambda item: item[0])
     ]
+
+
+def _shell_exit_result(
+    *,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+) -> _ShellCommandResult:
+    return _ShellCommandResult(
+        outcome=_ShellCommandOutcome(type="exit", exit_code=exit_code),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _shell_timeout_result(
+    *,
+    stdout: str,
+    stderr: str,
+) -> _ShellCommandResult:
+    return _ShellCommandResult(
+        outcome=_ShellCommandOutcome(type="timeout"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def _shell_error_result(*, error: Exception) -> _ShellCommandResult:
+    return _shell_exit_result(exit_code=1, stdout="", stderr=str(error))
+
+
+def _shell_execution_output(
+    *,
+    results: list[_ShellCommandResult],
+) -> dict[str, list[dict[str, object]]]:
+    payload = _ShellExecutionOutput(results=results).model_dump(mode="json")
+    return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,7 +449,7 @@ class BaseContainerShellTool(FunctionTool):
             container_id=active_container_id,
         )
 
-        results: list[dict[str, object]] = []
+        results: list[_ShellCommandResult] = []
         encoding = os.device_encoding(1) or "utf-8"
         item_id = _item_id_from_context(context)
 
@@ -460,14 +511,11 @@ class BaseContainerShellTool(FunctionTool):
 
                         exit_code = await container_exec.result
                         results.append(
-                            {
-                                "outcome": {
-                                    "type": "exit",
-                                    "exit_code": exit_code,
-                                },
-                                "stdout": stdout.finish(),
-                                "stderr": stderr.finish(),
-                            }
+                            _shell_exit_result(
+                                exit_code=exit_code,
+                                stdout=stdout.finish(),
+                                stderr=stderr.finish(),
+                            )
                         )
                 except asyncio.TimeoutError:
                     logger.warning("the command timed out after %ss", timeout)
@@ -479,11 +527,10 @@ class BaseContainerShellTool(FunctionTool):
                     await _await_output_tasks(stdout_task, stderr_task)
 
                     results.append(
-                        {
-                            "outcome": {"type": "timeout"},
-                            "stdout": stdout.finish(),
-                            "stderr": stderr.finish(),
-                        }
+                        _shell_timeout_result(
+                            stdout=stdout.finish(),
+                            stderr=stderr.finish(),
+                        )
                     )
                     break
                 except Exception as exc:
@@ -495,24 +542,12 @@ class BaseContainerShellTool(FunctionTool):
 
                     stdout.finish()
                     stderr.finish()
-                    results.append(
-                        {
-                            "outcome": {"type": "exit", "exit_code": 1},
-                            "stdout": "",
-                            "stderr": str(exc),
-                        }
-                    )
+                    results.append(_shell_error_result(error=exc))
                     break
         except Exception as exc:
-            results.append(
-                {
-                    "outcome": {"type": "exit", "exit_code": 1},
-                    "stdout": "",
-                    "stderr": str(exc),
-                }
-            )
+            results.append(_shell_error_result(error=exc))
 
-        return {"results": results}
+        return _shell_execution_output(results=results)
 
 
 class ContainerShellToolConfig(BaseModel):
@@ -611,6 +646,151 @@ class ContainerShellTool(BaseContainerShellTool):
             )
 
         return self._container_id
+
+
+class ProcessShellTool(FunctionTool):
+    def __init__(
+        self,
+        *,
+        name: str = "process_shell",
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        working_dir: Optional[str] = None,
+        env: Optional[dict[str, str]] = None,
+    ) -> None:
+        self.working_dir = working_dir
+        self.env = env
+
+        super().__init__(
+            name=name,
+            description=description
+            or "execute shell commands in a local process and return the result",
+            title=title,
+            input_schema=_strict_model_schema(_ContainerShellInput),
+            output_spec=_json_output_spec(_ShellExecutionOutput),
+        )
+
+    async def execute(
+        self,
+        context: ToolContext,
+        *,
+        commands: list[str],
+        max_output_length: int | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, list[dict[str, object]]]:
+        parsed = _ContainerShellInput.model_validate(
+            {
+                "commands": commands,
+                "max_output_length": max_output_length,
+                "timeout_ms": timeout_ms,
+            }
+        )
+
+        effective_max_output_length = (
+            parsed.max_output_length
+            if parsed.max_output_length is not None
+            else DEFAULT_MAX_OUTPUT_LENGTH
+        )
+        if effective_max_output_length <= 0:
+            raise ValueError("max_output_length must be greater than 0")
+
+        timeout = float(parsed.timeout_ms) / 1000.0 if parsed.timeout_ms else 60.0
+        merged_env = {**os.environ}
+        if self.env is not None:
+            merged_env.update(self.env)
+
+        results: list[_ShellCommandResult] = []
+        encoding = os.device_encoding(1) or "utf-8"
+        item_id = _item_id_from_context(context)
+
+        for command in parsed.commands:
+            logger.info(
+                "executing shell commands in local process with timeout %s: %s",
+                timeout,
+                command,
+            )
+
+            proc: asyncio.subprocess.Process | None = None
+            stdout_task: asyncio.Task[None] | None = None
+            stderr_task: asyncio.Task[None] | None = None
+            stdout = StreamOutputAccumulator(
+                context=context,
+                item_id=item_id,
+                source="stdout",
+                encoding=encoding,
+                max_length=effective_max_output_length,
+                max_log_line_length=MAX_LOG_LINE_LENGTH,
+            )
+            stderr = StreamOutputAccumulator(
+                context=context,
+                item_id=item_id,
+                source="stderr",
+                encoding=encoding,
+                max_length=effective_max_output_length,
+                max_log_line_length=MAX_LOG_LINE_LENGTH,
+            )
+
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    shlex.join(["bash", "-c", command]),
+                    cwd=self.working_dir or os.getcwd(),
+                    env=merged_env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout_task = asyncio.create_task(
+                    collect_output_stream(
+                        stream=_stream_reader_chunks(proc.stdout),
+                        accumulator=stdout,
+                    )
+                )
+                stderr_task = asyncio.create_task(
+                    collect_output_stream(
+                        stream=_stream_reader_chunks(proc.stderr),
+                        accumulator=stderr,
+                    )
+                )
+
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+                await _await_output_tasks(stdout_task, stderr_task)
+            except asyncio.TimeoutError:
+                logger.warning("the command timed out after %ss", timeout)
+                if proc is not None:
+                    proc.kill()
+                    await proc.wait()
+                await _await_output_tasks(stdout_task, stderr_task)
+
+                results.append(
+                    _shell_timeout_result(
+                        stdout=stdout.finish(),
+                        stderr=stderr.finish(),
+                    )
+                )
+                break
+            except Exception as exc:
+                if proc is not None and proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+                if stdout_task is not None:
+                    stdout_task.cancel()
+                if stderr_task is not None:
+                    stderr_task.cancel()
+                await _await_output_tasks(stdout_task, stderr_task)
+
+                stdout.finish()
+                stderr.finish()
+                results.append(_shell_error_result(error=exc))
+                break
+
+            results.append(
+                _shell_exit_result(
+                    exit_code=proc.returncode if proc is not None else 1,
+                    stdout=stdout.finish(),
+                    stderr=stderr.finish(),
+                )
+            )
+
+        return _shell_execution_output(results=results)
 
 
 class ContainerToolkitConfig(BaseModel):

@@ -7,6 +7,7 @@ from meshagent.tools import (
     ContainerShellTool,
     ContainerToolkit,
     JsonContent,
+    ProcessShellTool,
     ToolContext,
 )
 
@@ -227,6 +228,84 @@ async def test_container_shell_tool_chunks_long_single_log_lines(
             "lines": [
                 {"source": "stdout", "text": "abcd"},
                 {"source": "stdout", "text": "ef"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_process_shell_tool_uses_working_dir_and_env(
+    tmp_path,
+) -> None:
+    emitted: list[dict] = []
+    tool = ProcessShellTool(
+        working_dir=str(tmp_path),
+        env={"EXAMPLE_VAR": "hello"},
+    )
+
+    result = await tool.execute(
+        context=ToolContext(
+            room=object(),  # type: ignore[arg-type]
+            caller=object(),  # type: ignore[arg-type]
+            caller_context={"item_id": "tool-1"},
+            event_handler=emitted.append,
+        ),
+        commands=['printf \'%s|%s\' "$PWD" "$EXAMPLE_VAR"'],
+    )
+
+    assert result == {
+        "results": [
+            {
+                "outcome": {"type": "exit", "exit_code": 0},
+                "stdout": f"{tmp_path}|hello",
+                "stderr": "",
+            }
+        ]
+    }
+    assert emitted == [
+        {
+            "type": "meshagent.handler.output",
+            "item_id": "tool-1",
+            "lines": [{"source": "stdout", "text": f"{tmp_path}|hello"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_process_shell_tool_truncates_success_output_by_default() -> None:
+    emitted: list[dict] = []
+    tool = ProcessShellTool()
+
+    result = await tool.execute(
+        context=ToolContext(
+            room=object(),  # type: ignore[arg-type]
+            caller=object(),  # type: ignore[arg-type]
+            caller_context={"item_id": "tool-1"},
+            event_handler=emitted.append,
+        ),
+        commands=["printf 'abcdefghijk'"],
+        max_output_length=8,
+    )
+
+    assert result == {
+        "results": [
+            {
+                "outcome": {"type": "exit", "exit_code": 0},
+                "stdout": "abcdefgh\n\n[output truncated after 8 characters]",
+                "stderr": "",
+            }
+        ]
+    }
+    assert emitted == [
+        {
+            "type": "meshagent.handler.output",
+            "item_id": "tool-1",
+            "lines": [
+                {"source": "stdout", "text": "abcdefgh"},
+                {
+                    "source": "stdout",
+                    "text": "[output truncated after 8 characters]",
+                },
             ],
         }
     ]
