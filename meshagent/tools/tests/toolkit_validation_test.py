@@ -2,6 +2,7 @@ import pytest
 from jsonschema import ValidationError as JsonSchemaValidationError
 from pydantic import BaseModel
 
+import meshagent.tools.toolkit as toolkit_module
 from meshagent.api import ToolContentSpec
 from meshagent.api.messaging import JsonContent
 from meshagent.api.specs.service import ContainerMountSpec
@@ -67,6 +68,40 @@ class _NestedPayloadTool(FunctionTool):
     async def execute(self, context: ToolContext, *, payload: _NestedPayload):
         del context
         return {"value": payload.value}
+
+
+class _RecordedSpan:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.attributes: dict[str, object] = {}
+
+    def set_attribute(self, name: str, value: object) -> None:
+        self.attributes[name] = value
+
+    def set_attributes(self, attributes: dict[str, object]) -> None:
+        self.attributes.update(attributes)
+
+
+class _RecordedSpanContext:
+    def __init__(self, spans: list[_RecordedSpan], name: str) -> None:
+        self._spans = spans
+        self._span = _RecordedSpan(name)
+
+    def __enter__(self) -> _RecordedSpan:
+        self._spans.append(self._span)
+        return self._span
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        del exc_type, exc, tb
+        return False
+
+
+class _RecordedTracer:
+    def __init__(self) -> None:
+        self.spans: list[_RecordedSpan] = []
+
+    def start_as_current_span(self, name: str) -> _RecordedSpanContext:
+        return _RecordedSpanContext(self.spans, name)
 
 
 @tool(name="count_mounts")
@@ -147,6 +182,28 @@ async def test_toolkit_content_types_mode_supports_manual_nested_pydantic_argume
 
     assert isinstance(result, JsonContent)
     assert result.json == {"value": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_toolkit_execute_uses_descriptive_span_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded_tracer = _RecordedTracer()
+    monkeypatch.setattr(toolkit_module, "tracer", recorded_tracer)
+    toolkit = Toolkit(name="math-toolkit", tools=[_AddTool()])
+    context = ToolContext(room=object(), caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="add",
+        input=JsonContent(json={"a": 1, "b": 2}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"c": 3}
+    assert [span.name for span in recorded_tracer.spans] == ["execute.math-toolkit.add"]
+    assert recorded_tracer.spans[0].attributes["toolkit"] == "math-toolkit"
+    assert recorded_tracer.spans[0].attributes["tool"] == "add"
 
 
 @pytest.mark.asyncio

@@ -90,6 +90,12 @@ def _span_json_default(value: Any) -> Any:
     return str(value)
 
 
+def build_tool_span_name(
+    *, operation: Literal["invoke", "execute"], toolkit_name: str, tool_name: str
+) -> str:
+    return f"{operation}.{toolkit_name}.{tool_name}"
+
+
 class ToolkitConfig(ToolkitConfig):
     toolkit: str
     tool: str
@@ -341,7 +347,13 @@ class Toolkit(ToolkitBuilder):
         input: Content | AsyncIterable[Content],
         validate_function_schema: bool = True,
     ):
-        with tracer.start_as_current_span("toolkit.execute") as span:
+        with tracer.start_as_current_span(
+            build_tool_span_name(
+                operation="execute",
+                toolkit_name=self.name,
+                tool_name=name,
+            )
+        ) as span:
             span.set_attributes({"toolkit": self.name, "tool": name})
             context_validation_mode = context.validation_mode
             if context_validation_mode is not None:
