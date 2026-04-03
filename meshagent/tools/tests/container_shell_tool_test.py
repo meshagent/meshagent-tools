@@ -140,6 +140,28 @@ async def test_container_shell_tool_emits_live_output_events() -> None:
 
 
 @pytest.mark.asyncio
+async def test_container_shell_tool_stop_stops_and_deletes_cached_container() -> None:
+    room = _FakeRoom()
+    tool = ContainerShellTool()
+
+    await tool.execute(
+        context=ToolContext(
+            room=room,
+            caller=object(),
+        ),
+        commands=["printf 'hello\\n'"],
+    )
+
+    await tool.stop(room=room)
+    await tool.stop(room=room)
+
+    assert room.containers.stop_calls == [
+        {"container_id": "container-1", "force": True}
+    ]
+    assert room.containers.delete_calls == [{"container_id": "container-1"}]
+
+
+@pytest.mark.asyncio
 async def test_container_shell_tool_truncates_success_output_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

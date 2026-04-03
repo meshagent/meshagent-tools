@@ -647,6 +647,29 @@ class ContainerShellTool(BaseContainerShellTool):
 
         return self._container_id
 
+    async def stop(self, *, room: RoomClient) -> None:
+        container_id = self._container_id
+        if container_id is None:
+            return
+
+        self._container_id = None
+
+        try:
+            await room.containers.stop(container_id=container_id, force=True)
+        except Exception as ex:
+            logger.warning(
+                "unable to stop cached shell container %s", container_id, exc_info=ex
+            )
+
+        try:
+            await room.containers.delete(container_id=container_id)
+        except Exception as ex:
+            logger.warning(
+                "unable to delete cached shell container %s",
+                container_id,
+                exc_info=ex,
+            )
+
 
 class ProcessShellTool(FunctionTool):
     def __init__(
