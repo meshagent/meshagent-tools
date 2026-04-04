@@ -23,13 +23,14 @@ class _FakeExec:
         *,
         stdout_chunks: list[bytes],
         stderr_chunks: list[bytes],
-        exit_code: int = 0,
+        exit_code: int | None = 0,
     ) -> None:
         self._stdout_chunks = stdout_chunks
         self._stderr_chunks = stderr_chunks
         loop = asyncio.get_running_loop()
         self.result = loop.create_future()
-        self.result.set_result(exit_code)
+        if exit_code is not None:
+            self.result.set_result(exit_code)
         self.killed = False
 
     async def stdout(self):
@@ -97,6 +98,25 @@ class _FakeRoom:
         self.containers = _FakeContainers()
 
 
+def test_shell_execution_output_omits_exit_code_for_timeout() -> None:
+    assert container_shell_module._shell_execution_output(
+        results=[
+            container_shell_module._shell_timeout_result(
+                stdout="",
+                stderr="",
+            )
+        ]
+    ) == {
+        "results": [
+            {
+                "outcome": {"type": "timeout"},
+                "stdout": "",
+                "stderr": "",
+            }
+        ]
+    }
+
+
 @pytest.mark.asyncio
 async def test_container_shell_tool_emits_live_output_events() -> None:
     room = _FakeRoom()
@@ -137,6 +157,38 @@ async def test_container_shell_tool_emits_live_output_events() -> None:
     for event in emitted:
         assert event["type"] == "meshagent.handler.output"
         assert event["item_id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_container_shell_tool_timeout_omits_exit_code() -> None:
+    room = _FakeRoom()
+    timed_out_exec = _FakeExec(
+        stdout_chunks=[b"line 1\n"],
+        stderr_chunks=[b"warn 1\n"],
+        exit_code=None,
+    )
+    room.containers.next_exec = timed_out_exec
+    tool = ContainerShellTool(working_dir="/workspace")
+
+    result = await tool.execute(
+        context=ToolContext(
+            room=room,
+            caller=object(),
+        ),
+        commands=["sleep 5"],
+        timeout_ms=10,
+    )
+
+    assert result == {
+        "results": [
+            {
+                "outcome": {"type": "timeout"},
+                "stdout": "line 1\n",
+                "stderr": "warn 1\n",
+            }
+        ]
+    }
+    assert timed_out_exec.killed is True
 
 
 @pytest.mark.asyncio

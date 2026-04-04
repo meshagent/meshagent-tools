@@ -6,7 +6,7 @@ import os
 import shlex
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,10 +44,21 @@ class _ManagedContainerShellInput(_ContainerShellInput):
     container_id: str = Field(min_length=1)
 
 
-class _ShellCommandOutcome(BaseModel):
+class _ShellExitOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    type: Literal["exit", "timeout"]
-    exit_code: int | None = None
+    type: Literal["exit"]
+    exit_code: int
+
+
+class _ShellTimeoutOutcome(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["timeout"]
+
+
+_ShellCommandOutcome = Annotated[
+    _ShellExitOutcome | _ShellTimeoutOutcome,
+    Field(discriminator="type"),
+]
 
 
 class _ShellCommandResult(BaseModel):
@@ -221,7 +232,7 @@ def _shell_exit_result(
     stderr: str,
 ) -> _ShellCommandResult:
     return _ShellCommandResult(
-        outcome=_ShellCommandOutcome(type="exit", exit_code=exit_code),
+        outcome=_ShellExitOutcome(type="exit", exit_code=exit_code),
         stdout=stdout,
         stderr=stderr,
     )
@@ -233,7 +244,7 @@ def _shell_timeout_result(
     stderr: str,
 ) -> _ShellCommandResult:
     return _ShellCommandResult(
-        outcome=_ShellCommandOutcome(type="timeout"),
+        outcome=_ShellTimeoutOutcome(type="timeout"),
         stdout=stdout,
         stderr=stderr,
     )
