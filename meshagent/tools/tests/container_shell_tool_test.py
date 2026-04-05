@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 import meshagent.tools.container_shell as container_shell_module
+from meshagent.api.specs.service import ConfigMountSpec, ContainerMountSpec
 from meshagent.tools import (
     ContainerShellTool,
     ContainerToolkit,
@@ -117,6 +118,28 @@ def test_shell_execution_output_omits_exit_code_for_timeout() -> None:
     }
 
 
+def test_merge_container_mounts_preserves_config_mounts() -> None:
+    merged = container_shell_module._merge_container_mounts(
+        defaults=ContainerMountSpec(configs=[ConfigMountSpec(path="/default-config")]),
+        overrides=ContainerMountSpec(
+            configs=[ConfigMountSpec(path="/override-config")]
+        ),
+    )
+
+    assert merged is not None
+    assert merged.model_dump(mode="json") == {
+        "room": None,
+        "project": None,
+        "images": None,
+        "files": None,
+        "empty_dirs": None,
+        "configs": [
+            {"path": "/default-config"},
+            {"path": "/override-config"},
+        ],
+    }
+
+
 @pytest.mark.asyncio
 async def test_container_shell_tool_emits_live_output_events() -> None:
     room = _FakeRoom()
@@ -157,6 +180,56 @@ async def test_container_shell_tool_emits_live_output_events() -> None:
     for event in emitted:
         assert event["type"] == "meshagent.handler.output"
         assert event["item_id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_container_shell_tool_config_mounts_expand_runtime_files(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text('{"name":"assistant"}')
+    members_path = tmp_path / "members.json"
+    members_path.write_text('{"members":[]}')
+    monkeypatch.setenv("MESHAGENT_SPEC_PATH", str(spec_path))
+    monkeypatch.setenv("MESHAGENT_MEMBERS_PATH", str(members_path))
+
+    room = _FakeRoom()
+    tool = ContainerShellTool(
+        image="busybox:latest",
+        mounts=ContainerMountSpec(configs=[ConfigMountSpec(path="/var/run/meshagent")]),
+    )
+
+    await tool.execute(
+        context=ToolContext(
+            room=room,
+            caller=object(),
+        ),
+        commands=["pwd"],
+    )
+
+    assert len(room.containers.run_calls) == 1
+    run_call = room.containers.run_calls[0]
+    mounts = run_call["mounts"]
+    assert isinstance(mounts, ContainerMountSpec)
+    assert mounts.configs is None
+    assert mounts.files is not None
+    assert mounts.model_dump(mode="json")["files"] == [
+        {
+            "path": "/var/run/meshagent/spec.json",
+            "text": '{"name":"assistant"}',
+            "read_only": True,
+        },
+        {
+            "path": "/var/run/meshagent/members.json",
+            "text": '{"members":[]}',
+            "read_only": True,
+        },
+    ]
+    assert run_call["env"] == {
+        "MESHAGENT_SPEC_PATH": "/var/run/meshagent/spec.json",
+        "MESHAGENT_MEMBERS_PATH": "/var/run/meshagent/members.json",
+    }
 
 
 @pytest.mark.asyncio
@@ -494,6 +567,59 @@ async def test_container_toolkit_manages_container_lifecycle() -> None:
 
     assert isinstance(final_list_result, JsonContent)
     assert final_list_result.json == {"containers": []}
+
+
+@pytest.mark.asyncio
+async def test_container_toolkit_start_container_preserves_default_config_mounts(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = tmp_path / "spec.json"
+    spec_path.write_text('{"name":"assistant"}')
+    monkeypatch.setenv("MESHAGENT_SPEC_PATH", str(spec_path))
+    monkeypatch.delenv("MESHAGENT_MEMBERS_PATH", raising=False)
+
+    room = _FakeRoom()
+    toolkit = ContainerToolkit(
+        default_image="busybox:latest",
+        mounts=ContainerMountSpec(configs=[ConfigMountSpec(path="/var/run/meshagent")]),
+    )
+
+    container_id = await toolkit._manager.start_container(
+        room=room,
+        image=None,
+        mounts=ContainerMountSpec(
+            room=[
+                {
+                    "path": "/workspace",
+                    "subpath": "/src",
+                    "read_only": False,
+                }
+            ]
+        ),
+        env=None,
+        working_dir=None,
+    )
+
+    assert container_id == "container-1"
+    assert len(room.containers.run_calls) == 1
+    run_call = room.containers.run_calls[0]
+    mounts = run_call["mounts"]
+    assert isinstance(mounts, ContainerMountSpec)
+    assert mounts.room is not None
+    assert mounts.room[0].path == "/workspace"
+    assert mounts.files is not None
+    assert mounts.model_dump(mode="json")["files"] == [
+        {
+            "path": "/var/run/meshagent/spec.json",
+            "text": '{"name":"assistant"}',
+            "read_only": True,
+        }
+    ]
+    assert run_call["env"] == {"MESHAGENT_SPEC_PATH": "/var/run/meshagent/spec.json"}
+    record = await toolkit._manager.require_container(container_id=container_id)
+    assert record.mounts is not None
+    assert record.mounts.configs == [ConfigMountSpec(path="/var/run/meshagent")]
 
 
 @pytest.mark.asyncio

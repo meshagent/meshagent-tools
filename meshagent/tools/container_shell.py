@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import posixpath
 import shlex
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
@@ -11,7 +12,12 @@ from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from meshagent.api import RoomClient, RoomException, ToolContentSpec
-from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
+from meshagent.api.specs.service import (
+    ConfigMountSpec,
+    ContainerMountSpec,
+    FileStorageMountSpec,
+    RoomStorageMountSpec,
+)
 from meshagent.tools.strict_schema import ensure_strict_json_schema
 
 from ._shell_output import (
@@ -192,6 +198,7 @@ def _merge_container_mounts(
     image_mounts = [*(defaults.images or []), *(overrides.images or [])]
     file_mounts = [*(defaults.files or []), *(overrides.files or [])]
     empty_dir_mounts = [*(defaults.empty_dirs or []), *(overrides.empty_dirs or [])]
+    config_mounts = [*(defaults.configs or []), *(overrides.configs or [])]
 
     return ContainerMountSpec(
         room=room_mounts or None,
@@ -199,7 +206,91 @@ def _merge_container_mounts(
         images=image_mounts or None,
         files=file_mounts or None,
         empty_dirs=empty_dir_mounts or None,
+        configs=config_mounts or None,
     )
+
+
+def _runtime_config_source(*, env_var_name: str) -> tuple[str, str] | None:
+    source_path = _normalize_optional_string(os.getenv(env_var_name))
+    if source_path is None:
+        return None
+
+    try:
+        with open(source_path, "r", encoding="utf-8") as source_file:
+            return source_path, source_file.read()
+    except OSError as exc:
+        raise RoomException(
+            f"unable to read {env_var_name} from {source_path}: {exc}"
+        ) from exc
+
+
+def _config_mount_target_path(*, mount: ConfigMountSpec, filename: str) -> str:
+    base_path = mount.path.rstrip("/") or "/"
+    return posixpath.join(base_path, filename)
+
+
+def _expand_runtime_config_mounts(
+    *,
+    mounts: ContainerMountSpec | None,
+) -> tuple[ContainerMountSpec | None, dict[str, str]]:
+    if mounts is None:
+        return None, {}
+
+    expanded_mounts = mounts.model_copy(deep=True)
+    config_mounts = expanded_mounts.configs or []
+    if len(config_mounts) == 0:
+        return expanded_mounts, {}
+
+    spec_source = _runtime_config_source(env_var_name="MESHAGENT_SPEC_PATH")
+    members_source = _runtime_config_source(env_var_name="MESHAGENT_MEMBERS_PATH")
+    if spec_source is None and members_source is None:
+        raise RoomException(
+            "container config mounts require MESHAGENT_SPEC_PATH or "
+            "MESHAGENT_MEMBERS_PATH in the current environment"
+        )
+
+    file_mounts = list(expanded_mounts.files or [])
+    file_targets = {file_mount.path for file_mount in file_mounts}
+    env_updates: dict[str, str] = {}
+
+    for index, config_mount in enumerate(config_mounts):
+        if spec_source is not None:
+            spec_target = _config_mount_target_path(
+                mount=config_mount,
+                filename="spec.json",
+            )
+            if spec_target not in file_targets:
+                file_mounts.append(
+                    FileStorageMountSpec(
+                        path=spec_target,
+                        text=spec_source[1],
+                        read_only=True,
+                    )
+                )
+                file_targets.add(spec_target)
+            if index == 0:
+                env_updates["MESHAGENT_SPEC_PATH"] = spec_target
+
+        if members_source is not None:
+            members_target = _config_mount_target_path(
+                mount=config_mount,
+                filename="members.json",
+            )
+            if members_target not in file_targets:
+                file_mounts.append(
+                    FileStorageMountSpec(
+                        path=members_target,
+                        text=members_source[1],
+                        read_only=True,
+                    )
+                )
+                file_targets.add(members_target)
+            if index == 0:
+                env_updates["MESHAGENT_MEMBERS_PATH"] = members_target
+
+    expanded_mounts.files = file_mounts or None
+    expanded_mounts.configs = None
+    return expanded_mounts, env_updates
 
 
 def _container_env_dict(
@@ -325,6 +416,11 @@ class _ManagedContainerManager:
             overrides=mounts,
         )
         resolved_env = _container_env_dict(defaults=self.default_env, entries=env)
+        run_mounts, runtime_config_env = _expand_runtime_config_mounts(
+            mounts=resolved_mounts
+        )
+        for key, value in runtime_config_env.items():
+            resolved_env.setdefault(key, value)
         resolved_working_dir = _normalize_optional_string(
             working_dir
         ) or _normalize_optional_string(self.default_working_dir)
@@ -333,7 +429,7 @@ class _ManagedContainerManager:
             command="sleep infinity",
             image=resolved_image,
             working_dir=resolved_working_dir,
-            mounts=resolved_mounts,
+            mounts=run_mounts,
             writable_root_fs=True,
             env=resolved_env,
         )
@@ -648,12 +744,18 @@ class ContainerShellTool(BaseContainerShellTool):
                     break
 
         if not is_running:
+            run_mounts, runtime_config_env = _expand_runtime_config_mounts(
+                mounts=self.mounts
+            )
+            env = dict(self.env or {})
+            for key, value in runtime_config_env.items():
+                env.setdefault(key, value)
             self._container_id = await context.room.containers.run(
                 command="sleep infinity",
                 image=self.image,
-                mounts=self.mounts,
+                mounts=run_mounts,
                 writable_root_fs=True,
-                env=self.env,
+                env=env or None,
             )
 
         return self._container_id
