@@ -83,7 +83,7 @@ async def test_script_tool_container_exec_truncates_success_output() -> None:
     tool = ScriptTool(
         name="script",
         commands=["echo hi"],
-        image="meshagent/python:default",
+        image="python:3.13",
         max_output_length=8,
     )
 
