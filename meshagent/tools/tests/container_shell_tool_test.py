@@ -463,7 +463,7 @@ async def test_container_toolkit_manages_container_lifecycle() -> None:
     room = _FakeRoom()
     toolkit = ContainerToolkit(
         working_dir="/workspace",
-        default_image="python:3.13",
+        default_image="meshagent/python:default",
         env={"BASE": "1"},
     )
     context = ToolContext(room=room, caller=object())
@@ -479,7 +479,7 @@ async def test_container_toolkit_manages_container_lifecycle() -> None:
     assert room.containers.run_calls == [
         {
             "command": "sleep infinity",
-            "image": "python:3.13",
+            "image": "meshagent/python:default",
             "working_dir": "/workspace",
             "mounts": container_shell_module.DEFAULT_CONTAINER_MOUNT_SPEC,
             "writable_root_fs": True,
@@ -498,7 +498,7 @@ async def test_container_toolkit_manages_container_lifecycle() -> None:
         "containers": [
             {
                 "container_id": "container-1",
-                "image": "python:3.13",
+                "image": "meshagent/python:default",
                 "working_dir": "/workspace",
                 "mounts": container_shell_module.DEFAULT_CONTAINER_MOUNT_SPEC.model_dump(
                     mode="json"
@@ -625,7 +625,7 @@ async def test_container_toolkit_start_container_preserves_default_config_mounts
 @pytest.mark.asyncio
 async def test_container_toolkit_rejects_unmanaged_containers() -> None:
     room = _FakeRoom()
-    toolkit = ContainerToolkit(default_image="python:3.13")
+    toolkit = ContainerToolkit(default_image="meshagent/python:default")
     context = ToolContext(room=room, caller=object())
 
     with pytest.raises(Exception, match="not managed by this toolkit"):

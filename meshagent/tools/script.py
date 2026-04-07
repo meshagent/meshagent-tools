@@ -75,7 +75,7 @@ class ScriptToolkitBuilder(ToolkitBuilder):
         name: str = "script",
         commands: Optional[list[str]] = None,
         working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
+        image: Optional[str] = "meshagent/python:default",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         input_schema: Optional[dict] = None,
     ):
@@ -116,7 +116,7 @@ class ScriptTool(FunctionTool):
         title: Optional[str] = None,
         service_id: Optional[str] = None,
         working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
+        image: Optional[str] = "meshagent/python:default",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
         input_schema: Optional[dict] = None,

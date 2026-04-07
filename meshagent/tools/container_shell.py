@@ -366,7 +366,7 @@ class _ManagedContainerManager:
     def __init__(
         self,
         *,
-        default_image: str | None = "python:3.13",
+        default_image: str | None = "meshagent/python:default",
         default_mounts: ContainerMountSpec | None = DEFAULT_CONTAINER_MOUNT_SPEC,
         default_env: dict[str, str] | None = None,
         default_working_dir: str | None = None,
@@ -667,7 +667,7 @@ class ContainerShellToolkitBuilder(ToolkitBuilder):
         *,
         name: str = "container_shell",
         working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
+        image: Optional[str] = "meshagent/python:default",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
     ) -> None:
@@ -709,7 +709,7 @@ class ContainerShellTool(BaseContainerShellTool):
         description: Optional[str] = None,
         title: Optional[str] = None,
         working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
+        image: Optional[str] = "meshagent/python:default",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
     ) -> None:
@@ -939,7 +939,7 @@ class ContainerToolkitBuilder(ToolkitBuilder):
         *,
         name: str = "container",
         working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
+        image: Optional[str] = "meshagent/python:default",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
     ) -> None:
@@ -1107,7 +1107,7 @@ class ContainerToolkit(Toolkit):
         *,
         name: str = "container",
         working_dir: Optional[str] = None,
-        default_image: Optional[str] = "python:3.13",
+        default_image: Optional[str] = "meshagent/python:default",
         mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
         env: Optional[dict[str, str]] = None,
     ) -> None:
