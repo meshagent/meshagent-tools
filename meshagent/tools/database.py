@@ -2,12 +2,159 @@ from .config import ToolkitConfig
 from .tool import FunctionTool
 from .toolkit import ToolContext, ToolkitBuilder
 from .hosting import RemoteToolkit, Toolkit
-from typing import Literal, Optional
-from meshagent.api.room_server_client import DataType, RoomClient
+from typing import Any, Literal, Optional
+from meshagent.api.room_server_client import (
+    BinaryDataType,
+    DataType,
+    DateDataType,
+    JsonDataType,
+    ListDataType,
+    TimestampDataType,
+    StructDataType,
+    UuidDataType,
+    decode_records,
+    RoomClient,
+)
 
 import logging
 
 logger = logging.getLogger("database_toolkit")
+
+_EXPRESSION_JSON_SCHEMA = {
+    "type": "object",
+    "required": ["expression"],
+    "additionalProperties": False,
+    "properties": {
+        "expression": {
+            "type": "string",
+            "description": "a DataFusion / Lance SQL expression",
+        }
+    },
+}
+
+
+_JSON_VALUE_SCHEMA: dict[str, Any] = {
+    "anyOf": [
+        {"type": "object"},
+        {"type": "array"},
+        {"type": "string"},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"},
+    ]
+}
+
+
+def _wrapped_database_value_json_schema(
+    *,
+    wrapper: str,
+    payload_schema: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": [wrapper],
+        "additionalProperties": False,
+        "properties": {
+            wrapper: payload_schema,
+        },
+    }
+
+
+def _tool_input_schema_for_data_type(
+    data_type: DataType,
+    *,
+    allow_expression: bool = False,
+) -> dict[str, Any]:
+    variants = list[dict[str, Any]]()
+    if not isinstance(
+        data_type,
+        (
+            BinaryDataType,
+            DateDataType,
+            JsonDataType,
+            ListDataType,
+            StructDataType,
+            TimestampDataType,
+            UuidDataType,
+        ),
+    ):
+        variants.append(data_type.to_json_schema())
+    if isinstance(data_type, BinaryDataType):
+        variants.append(
+            _wrapped_database_value_json_schema(
+                wrapper="binary",
+                payload_schema={
+                    "type": "string",
+                    "description": "a base64 encoded byte string",
+                },
+            )
+        )
+    if isinstance(data_type, DateDataType):
+        variants.append(
+            _wrapped_database_value_json_schema(
+                wrapper="date",
+                payload_schema={
+                    "type": "string",
+                    "description": "an ISO formatted date string",
+                },
+            )
+        )
+    if isinstance(data_type, TimestampDataType):
+        variants.append(
+            _wrapped_database_value_json_schema(
+                wrapper="timestamp",
+                payload_schema={
+                    "type": "string",
+                    "description": "an ISO formatted timestamp string",
+                },
+            )
+        )
+    if isinstance(data_type, UuidDataType):
+        variants.append(
+            _wrapped_database_value_json_schema(
+                wrapper="uuid",
+                payload_schema={
+                    "type": "string",
+                    "description": "a UUID string",
+                },
+            )
+        )
+    if isinstance(data_type, ListDataType):
+        variants.append(
+            _wrapped_database_value_json_schema(
+                wrapper="list",
+                payload_schema={"type": "array"},
+            )
+        )
+    if isinstance(data_type, StructDataType):
+        variants.append(
+            _wrapped_database_value_json_schema(
+                wrapper="struct",
+                payload_schema={"type": "object"},
+            )
+        )
+    if isinstance(data_type, JsonDataType):
+        variants.append(
+            _wrapped_database_value_json_schema(
+                wrapper="json",
+                payload_schema=_JSON_VALUE_SCHEMA,
+            )
+        )
+    if allow_expression:
+        variants.append(_EXPRESSION_JSON_SCHEMA)
+    if data_type.nullable:
+        variants.append({"type": "null"})
+    if len(variants) == 1:
+        return variants[0]
+    return {"anyOf": variants}
+
+
+def _normalize_database_tool_record(record: dict[str, Any]) -> dict[str, Any]:
+    return decode_records([record])[0]
+
+
+def _normalize_database_tool_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return decode_records(rows)
 
 
 class ListTablesTool(FunctionTool):
@@ -50,7 +197,10 @@ class InsertRowsTool(FunctionTool):
 
         for k, v in schema.items():
             input_schema["required"].append(k)
-            input_schema["properties"][k] = v.to_json_schema()
+            input_schema["properties"][k] = _tool_input_schema_for_data_type(
+                v,
+                allow_expression=True,
+            )
 
         super().__init__(
             name=f"insert_{table}_rows",
@@ -66,7 +216,9 @@ class InsertRowsTool(FunctionTool):
 
     async def execute(self, context: ToolContext, *, rows):
         await context.room.database.insert(
-            table=self.table, records=rows, namespace=self.namespace
+            table=self.table,
+            records=_normalize_database_tool_rows(rows),
+            namespace=self.namespace,
         )
 
 
@@ -90,7 +242,7 @@ class DeleteRowsTool(FunctionTool):
 
         for k, v in schema.items():
             input_schema["required"].append(k)
-            input_schema["properties"][k] = v.to_json_schema()
+            input_schema["properties"][k] = _tool_input_schema_for_data_type(v)
 
         super().__init__(
             name=f"delete_{table}_rows",
@@ -105,6 +257,8 @@ class DeleteRowsTool(FunctionTool):
         for k, v in values.items():
             if v is not None:
                 search[k] = v
+        if search:
+            search = _normalize_database_tool_record(search)
 
         await context.room.database.delete(
             table=self.table,
@@ -138,7 +292,12 @@ class UpdateTool(FunctionTool):
                     "type": "object",
                     "additionalProperties": False,
                     "required": [k],
-                    "properties": {k: v.to_json_schema()},
+                    "properties": {
+                        k: _tool_input_schema_for_data_type(
+                            v,
+                            allow_expression=True,
+                        )
+                    },
                 }
             )
 
@@ -174,6 +333,7 @@ class UpdateTool(FunctionTool):
         for value in values:
             for k, v in value.items():
                 set[k] = v
+        set = _normalize_database_tool_record(set)
 
         await context.room.database.update(
             table=self.table, where=where, values=set, namespace=self.namespace
@@ -202,7 +362,7 @@ class SearchTool(FunctionTool):
 
         for k, v in schema.items():
             query["required"].append(k)
-            query["properties"][k] = v.to_json_schema()
+            query["properties"][k] = _tool_input_schema_for_data_type(v)
 
         input_schema = {
             "type": "object",
@@ -242,6 +402,8 @@ class SearchTool(FunctionTool):
         for k, v in query.items():
             if v is not None:
                 search[k] = v
+        if search:
+            search = _normalize_database_tool_record(search)
 
         return {
             "rows": await context.room.database.search(
@@ -275,7 +437,7 @@ class LLMSearchTool(FunctionTool):
 
         for k, v in schema.items():
             query["required"].append(k)
-            query["properties"][k] = v.to_json_schema()
+            query["properties"][k] = _tool_input_schema_for_data_type(v)
 
         input_schema = {
             "type": "object",
@@ -315,6 +477,8 @@ class LLMSearchTool(FunctionTool):
         for k, v in query.items():
             if v is not None:
                 search[k] = v
+        if search:
+            search = _normalize_database_tool_record(search)
 
         return {
             "rows": await context.room.database.search(
@@ -356,7 +520,7 @@ class SpawnTaskForEachRow(FunctionTool):
 
         for k, v in schema.items():
             query["required"].append(k)
-            query["properties"][k] = v.to_json_schema()
+            query["properties"][k] = _tool_input_schema_for_data_type(v)
 
         input_schema = {
             "type": "object",
@@ -410,6 +574,8 @@ class SpawnTaskForEachRow(FunctionTool):
         for k, v in query.items():
             if v is not None:
                 search[k] = v
+        if search:
+            search = _normalize_database_tool_record(search)
 
         rows = await context.room.database.search(
             select=select,
@@ -461,7 +627,7 @@ class CountTool(FunctionTool):
 
         for k, v in schema.items():
             query["required"].append(k)
-            query["properties"][k] = v.to_json_schema()
+            query["properties"][k] = _tool_input_schema_for_data_type(v)
 
         super().__init__(
             name=f"count_{table}",
@@ -476,6 +642,8 @@ class CountTool(FunctionTool):
         for k, v in query.items():
             if v is not None:
                 search[k] = v
+        if search:
+            search = _normalize_database_tool_record(search)
 
         return {
             "rows": await context.room.database.count(

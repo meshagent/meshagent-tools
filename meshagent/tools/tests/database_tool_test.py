@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+
 import pytest
 
 from meshagent.api.messaging import EmptyContent, JsonContent
-from meshagent.api.room_server_client import IntDataType, TextDataType
+from meshagent.api.room_server_client import (
+    DateDataType,
+    IntDataType,
+    TextDataType,
+    TimestampDataType,
+)
 from meshagent.tools import ToolContext
 from meshagent.tools.database import DatabaseToolkit, DatabaseToolkitBuilder
 
@@ -75,6 +82,49 @@ async def test_database_toolkit_insert_rows_uses_room_database_insert() -> None:
         {
             "table": "users",
             "records": [{"id": 1, "name": "Alice"}],
+            "namespace": ["prod"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_database_toolkit_accepts_encoded_dates_and_timestamps() -> None:
+    room = _FakeRoom()
+    toolkit = DatabaseToolkit(
+        tables={
+            "events": {
+                "event_date": DateDataType(),
+                "created_at": TimestampDataType(),
+            }
+        },
+        namespace=["prod"],
+    )
+
+    result = await toolkit.execute(
+        context=_tool_context(room),
+        name="insert_events_rows",
+        input=JsonContent(
+            json={
+                "rows": [
+                    {
+                        "event_date": {"date": "2026-04-09"},
+                        "created_at": {"timestamp": "2026-04-09T12:30:45Z"},
+                    }
+                ]
+            }
+        ),
+    )
+
+    assert isinstance(result, EmptyContent)
+    assert room.database.insert_calls == [
+        {
+            "table": "events",
+            "records": [
+                {
+                    "event_date": date(2026, 4, 9),
+                    "created_at": datetime(2026, 4, 9, 12, 30, 45, tzinfo=timezone.utc),
+                }
+            ],
             "namespace": ["prod"],
         }
     ]
