@@ -1,6 +1,6 @@
 from meshagent.api import RoomClient
 
-from .tool import FunctionTool, LocalRoomTool, ToolContext
+from .tool import LocalRoomTool, ToolContext
 from .toolkit import Toolkit
 
 

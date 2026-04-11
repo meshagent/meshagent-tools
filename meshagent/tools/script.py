@@ -6,8 +6,7 @@ from typing import Optional
 
 from meshagent.api import RoomClient
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
-from meshagent.tools.tool import FunctionTool, LocalRoomTool, ToolContext
-from meshagent.tools.toolkit import Toolkit
+from meshagent.tools.tool import LocalRoomTool, ToolContext
 
 from ._shell_output import (
     DEFAULT_MAX_LOG_LINE_LENGTH,
