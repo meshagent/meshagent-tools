@@ -9,7 +9,7 @@ from meshagent.tools.datetime import DatetimeToolkit
 @pytest.mark.asyncio
 async def test_now_tool_accepts_empty_arguments():
     toolkit = DatetimeToolkit()
-    context = ToolContext(room=object(), caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -51,7 +51,7 @@ def test_datetime_tool_schemas_remain_strict_for_openai():
 @pytest.mark.asyncio
 async def test_non_nullable_required_fields_are_not_auto_filled():
     toolkit = DatetimeToolkit()
-    context = ToolContext(room=object(), caller=object())
+    context = ToolContext(caller=object())
 
     with pytest.raises(ValidationError):
         await toolkit.execute(

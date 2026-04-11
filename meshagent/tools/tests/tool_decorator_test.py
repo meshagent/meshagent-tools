@@ -24,7 +24,7 @@ async def make_payload(context: ToolContext, payload: Payload, flag: bool) -> Re
 @pytest.mark.asyncio
 async def test_decorated_tool_executes_with_toolkit():
     toolkit = Toolkit(name="test", tools=[make_payload])
-    context = ToolContext(room=object(), caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -51,7 +51,7 @@ class Greeter:
 async def test_decorated_method_executes_with_toolkit():
     greeter = Greeter("hello ")
     toolkit = Toolkit(name="test", tools=[greeter.greet])
-    context = ToolContext(room=object(), caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,

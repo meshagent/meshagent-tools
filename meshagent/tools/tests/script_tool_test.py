@@ -81,6 +81,7 @@ async def test_script_tool_container_exec_truncates_success_output() -> None:
     )
     emitted: list[dict[str, object]] = []
     tool = ScriptTool(
+        room=room,
         name="script",
         commands=["echo hi"],
         image="python:3.13",
@@ -89,7 +90,6 @@ async def test_script_tool_container_exec_truncates_success_output() -> None:
 
     result = await tool.execute(
         context=ToolContext(
-            room=room,
             caller=object(),
             caller_context={"item_id": "tool-1"},
             event_handler=emitted.append,
@@ -125,8 +125,10 @@ async def test_script_tool_container_exec_truncates_success_output() -> None:
 
 @pytest.mark.asyncio
 async def test_script_tool_local_exec_truncates_success_output() -> None:
+    room = _FakeRoom()
     emitted: list[dict[str, object]] = []
     tool = ScriptTool(
+        room=room,
         name="script",
         commands=["printf 'abcdefghijk'"],
         image=None,
@@ -135,7 +137,6 @@ async def test_script_tool_local_exec_truncates_success_output() -> None:
 
     result = await tool.execute(
         context=ToolContext(
-            room=object(),
             caller=object(),
             caller_context={"item_id": "tool-1"},
             event_handler=emitted.append,

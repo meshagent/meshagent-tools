@@ -7,9 +7,8 @@ from urllib.parse import urlparse
 from typing import Optional
 from meshagent.api.http import new_client_session
 from meshagent.api.messaging import FileContent, Content, TextContent
-from meshagent.tools.config import ToolkitConfig
 from meshagent.tools.tool import FunctionTool, ToolContext
-from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
+from meshagent.tools.toolkit import Toolkit
 from ._text_utils import (
     DEFAULT_TOOL_MAX_LENGTH,
     grep_text,
@@ -347,18 +346,3 @@ def _infer_filename(*, url: str, content_type: str) -> str:
         return basename
     extension = mimetypes.guess_extension(content_type or "") or ""
     return f"downloaded-content{extension}"
-
-
-class WebFetchConfig(ToolkitConfig):
-    name: str = "web_fetch"
-    user_agent: str = "Meshagent"
-    max_length: int = DEFAULT_TOOL_MAX_LENGTH
-
-
-class WebFetchToolkitBuilder(ToolkitBuilder):
-    def __init__(self):
-        super().__init__(name="web_fetch", type=WebFetchConfig)
-
-    async def make(self, *, model: str, config: WebFetchConfig) -> Toolkit:
-        del model
-        return WebToolkit(user_agent=config.user_agent, max_length=config.max_length)

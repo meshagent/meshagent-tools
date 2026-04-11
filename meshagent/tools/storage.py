@@ -10,12 +10,11 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from meshagent.api.messaging import JsonContent, LinkContent, FileContent, TextContent
-from meshagent.api import RoomException
+from meshagent.api import RoomClient, RoomException
 from meshagent.api.room_server_client import StorageEntry
 
-from .config import ToolkitConfig
 from .tool import FunctionTool
-from .toolkit import ToolContext, Toolkit, ToolkitBuilder
+from .toolkit import ToolContext, Toolkit
 from .blob import get_bytes_from_url
 from ._text_utils import (
     DEFAULT_TOOL_MAX_LENGTH,
@@ -31,7 +30,7 @@ class StorageToolMount(BaseModel):
     path: str
     read_only: bool = False
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     def _ensure_writable(self, path: str) -> None:
         if self.read_only:
@@ -69,13 +68,29 @@ class StorageToolMount(BaseModel):
         raise NotImplementedError
 
     async def list_entries(
-        self, *, context: ToolContext, resolved: "_ResolvedStoragePath"
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
     ) -> list[StorageEntry]:
         raise NotImplementedError
 
     async def get_download_url(
-        self, *, context: ToolContext, resolved: "_ResolvedStoragePath", path: str
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
+        path: str,
     ) -> LinkContent:
+        raise NotImplementedError
+
+    async def delete_path(
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
+        path: str,
+    ) -> None:
         raise NotImplementedError
 
 
@@ -124,13 +139,20 @@ class StorageToolLocalMount(StorageToolMount):
         await _write_local_bytes(local_path, data, overwrite)
 
     async def list_entries(
-        self, *, context: ToolContext, resolved: "_ResolvedStoragePath"
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
     ) -> list[StorageEntry]:
         local_path = _require_local_path(resolved)
         return await _list_local_entries(local_path)
 
     async def get_download_url(
-        self, *, context: ToolContext, resolved: "_ResolvedStoragePath", path: str
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
+        path: str,
     ) -> LinkContent:
         local_path = _require_local_path(resolved)
         file_path = Path(local_path)
@@ -141,9 +163,22 @@ class StorageToolLocalMount(StorageToolMount):
         name = os.path.basename(path)
         return LinkContent(name=name, url=file_path.resolve().as_uri())
 
+    async def delete_path(
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
+        path: str,
+    ) -> None:
+        del context
+        self._ensure_writable(path)
+        local_path = _require_local_path(resolved)
+        await _delete_local_path(local_path)
+
 
 class StorageToolRoomMount(StorageToolMount):
     subpath: Optional[str] = None
+    room: RoomClient
 
     async def read_file(
         self,
@@ -161,17 +196,17 @@ class StorageToolRoomMount(StorageToolMount):
                 resolved.room_root, f".schemas/{ext}" + ".json"
             )
 
-            if ext in ["transcript", "thread"] or await context.room.storage.exists(
+            if ext in ["transcript", "thread"] or await self.room.storage.exists(
                 path=schema_path
             ):
                 return FileContent(
                     mime_type="application/json",
                     name=filename,
                     data=json.dumps(
-                        await context.room.sync.describe(path=room_path)
+                        await self.room.sync.describe(path=room_path)
                     ).encode(),
                 )
-        return await context.room.storage.download(path=room_path)
+        return await self.room.storage.download(path=room_path)
 
     async def write_text(
         self,
@@ -184,7 +219,7 @@ class StorageToolRoomMount(StorageToolMount):
     ) -> None:
         self._ensure_writable(path)
         room_path = _require_room_path(resolved)
-        await context.room.storage.upload(
+        await self.room.storage.upload(
             path=room_path,
             data=text.encode("utf-8"),
             overwrite=overwrite,
@@ -202,30 +237,49 @@ class StorageToolRoomMount(StorageToolMount):
         self._ensure_writable(path)
         room_path = _require_room_path(resolved)
         if not overwrite:
-            result = await context.room.storage.exists(path=room_path)
+            result = await self.room.storage.exists(path=room_path)
             if result:
                 raise RoomException(
                     f"a file already exists at the path: {path}, try another filename"
                 )
-        await context.room.storage.upload(
+        await self.room.storage.upload(
             path=room_path,
             data=data,
             overwrite=overwrite,
         )
 
     async def list_entries(
-        self, *, context: ToolContext, resolved: "_ResolvedStoragePath"
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
     ) -> list[StorageEntry]:
         room_path = _require_room_path(resolved)
-        return await context.room.storage.list(path=room_path)
+        return await self.room.storage.list(path=room_path)
 
     async def get_download_url(
-        self, *, context: ToolContext, resolved: "_ResolvedStoragePath", path: str
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
+        path: str,
     ) -> LinkContent:
         room_path = _require_room_path(resolved)
         name = os.path.basename(path)
-        url = await context.room.storage.download_url(path=room_path)
+        url = await self.room.storage.download_url(path=room_path)
         return LinkContent(name=name, url=url)
+
+    async def delete_path(
+        self,
+        *,
+        context: ToolContext,
+        resolved: "_ResolvedStoragePath",
+        path: str,
+    ) -> None:
+        del context
+        self._ensure_writable(path)
+        room_path = _require_room_path(resolved)
+        await self.room.storage.delete(path=room_path)
 
 
 @dataclass(frozen=True)
@@ -300,11 +354,9 @@ def _normalize_room_root(subpath: Optional[str]) -> str:
     return "/".join(parts)
 
 
-def _prepare_mounts(
-    mounts: Optional[list[StorageToolMount]],
-) -> list[_PreparedMount]:
-    if not mounts:
-        mounts = [StorageToolRoomMount(path="/")]
+def _prepare_mounts(mounts: list[StorageToolMount]) -> list[_PreparedMount]:
+    if len(mounts) == 0:
+        raise RoomException("storage toolkit requires at least one mount")
 
     prepared = []
     for mount in mounts:
@@ -467,6 +519,18 @@ async def _list_local_entries(path: str) -> list[StorageEntry]:
     return await asyncio.to_thread(_list)
 
 
+async def _delete_local_path(path: str) -> None:
+    def _delete() -> None:
+        target = Path(path)
+        if not target.exists():
+            raise RoomException(f"file not found: {path}")
+        if target.is_dir():
+            raise RoomException(f"path is not a file: {path}")
+        target.unlink()
+
+    await asyncio.to_thread(_delete)
+
+
 class _StorageTool(FunctionTool):
     def __init__(self, *, mounts: list[_PreparedMount], **kwargs):
         super().__init__(**kwargs)
@@ -513,7 +577,9 @@ class ReadFileTool(_StorageTool):
         offset = normalize_offset(value=kwargs.get("offset"))
         resolved = self._resolve_path(path)
         file_content = await resolved.mount.read_file(
-            context=context, resolved=resolved, path=path
+            context=context,
+            resolved=resolved,
+            path=path,
         )
         if not _is_text_like_file(
             mime_type=file_content.mime_type,
@@ -583,7 +649,9 @@ class GrepFileTool(_StorageTool):
 
         resolved = self._resolve_path(path)
         file_content = await resolved.mount.read_file(
-            context=context, resolved=resolved, path=path
+            context=context,
+            resolved=resolved,
+            path=path,
         )
         if _is_pdf_or_image_file(mime_type=file_content.mime_type, path=path):
             return TextContent(
@@ -673,7 +741,9 @@ class GetFileDownloadUrl(_StorageTool):
         path = kwargs["path"]
         resolved = self._resolve_path(path)
         return await resolved.mount.get_download_url(
-            context=context, resolved=resolved, path=path
+            context=context,
+            resolved=resolved,
+            path=path,
         )
 
 
@@ -695,7 +765,10 @@ class ListFilesTool(_StorageTool):
     async def execute(self, context: ToolContext, **kwargs):
         path = kwargs["path"]
         resolved = self._resolve_path(path)
-        files = await resolved.mount.list_entries(context=context, resolved=resolved)
+        files = await resolved.mount.list_entries(
+            context=context,
+            resolved=resolved,
+        )
         return JsonContent(
             json={"files": list([f.model_dump(mode="json") for f in files])}
         )
@@ -747,8 +820,8 @@ class SaveFileFromUrlTool(_StorageTool):
 class StorageToolkit(Toolkit):
     def __init__(
         self,
+        mounts: list[StorageToolMount],
         read_only: bool = False,
-        mounts: Optional[list[StorageToolMount]] = None,
         max_length: int = DEFAULT_TOOL_MAX_LENGTH,
     ):
         prepared_mounts = _prepare_mounts(mounts)
@@ -801,7 +874,10 @@ class StorageToolkit(Toolkit):
         self, *, context: ToolContext, path: str
     ) -> list[StorageEntry]:
         resolved = self._resolve_path(path)
-        return await resolved.mount.list_entries(context=context, resolved=resolved)
+        return await resolved.mount.list_entries(
+            context=context,
+            resolved=resolved,
+        )
 
     async def get_download_url(self, *, context: ToolContext, path: str) -> LinkContent:
         resolved = self._resolve_path(path)
@@ -847,30 +923,13 @@ class StorageToolkit(Toolkit):
             overwrite=overwrite,
         )
 
-
-class StorageToolkitConfig(ToolkitConfig):
-    name: str = "storage"
-    max_length: int = DEFAULT_TOOL_MAX_LENGTH
-
-
-class StorageToolkitBuilder(ToolkitBuilder):
-    def __init__(
-        self,
-        *,
-        mounts: Optional[list[StorageToolMount]] = None,
-        max_length: int = DEFAULT_TOOL_MAX_LENGTH,
-    ):
-        super().__init__(name="storage", type=StorageToolkitConfig)
-        self.mounts = mounts
-        self.max_length = max_length
-
-    async def make(self, *, model: str, config: StorageToolkitConfig) -> Toolkit:
-        del model
-        return StorageToolkit(
-            mounts=self.mounts,
-            max_length=config.max_length
-            if config.max_length is not None
-            else self.max_length,
+    async def delete(self, *, context: ToolContext, path: str) -> None:
+        self._ensure_writable(path)
+        resolved = self._resolve_path(path)
+        await resolved.mount.delete_path(
+            context=context,
+            resolved=resolved,
+            path=path,
         )
 
 

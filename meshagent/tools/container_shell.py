@@ -25,8 +25,8 @@ from ._shell_output import (
     StreamOutputAccumulator,
     collect_output_stream,
 )
-from .tool import FunctionTool, ToolContext
-from .toolkit import Toolkit, ToolkitBuilder
+from .tool import FunctionTool, LocalRoomTool, ToolContext
+from .toolkit import Toolkit
 
 logger = logging.getLogger("container_shell_tool")
 
@@ -475,10 +475,11 @@ class _ManagedContainerManager:
                 )
 
 
-class BaseContainerShellTool(FunctionTool):
+class BaseContainerShellTool(LocalRoomTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         name: str,
         input_model: type[BaseModel],
         description: Optional[str] = None,
@@ -489,6 +490,7 @@ class BaseContainerShellTool(FunctionTool):
         self._input_model = input_model
 
         super().__init__(
+            room=room,
             name=name,
             description=description
             or "execute shell commands in a container and return the result",
@@ -575,7 +577,7 @@ class BaseContainerShellTool(FunctionTool):
                         f"cd {shlex.quote(command_working_dir)} && {command}"
                     )
 
-                container_exec = await context.room.containers.exec(
+                container_exec = await self.room.containers.exec(
                     container_id=active_container_id,
                     command=["bash", "-lc", command_to_run],
                     tty=False,
@@ -661,48 +663,11 @@ class ContainerShellToolConfig(BaseModel):
     name: Literal["container_shell"] = "container_shell"
 
 
-class ContainerShellToolkitBuilder(ToolkitBuilder):
-    def __init__(
-        self,
-        *,
-        name: str = "container_shell",
-        working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
-        mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
-        env: Optional[dict[str, str]] = None,
-    ) -> None:
-        super().__init__(name=name, type=ContainerShellToolConfig)
-        self.working_dir = working_dir
-        self.image = image
-        self.mounts = mounts
-        self.env = env
-
-    async def make(
-        self,
-        *,
-        model: str,
-        config: ContainerShellToolConfig,
-    ) -> Toolkit:
-        del model
-        del config
-        return Toolkit(
-            name=self.name,
-            tools=[
-                ContainerShellTool(
-                    name=self.name,
-                    working_dir=self.working_dir,
-                    image=self.image,
-                    mounts=self.mounts,
-                    env=self.env,
-                )
-            ],
-        )
-
-
 class ContainerShellTool(BaseContainerShellTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         name: str = "container_shell",
         description: Optional[str] = None,
         title: Optional[str] = None,
@@ -712,11 +677,16 @@ class ContainerShellTool(BaseContainerShellTool):
         env: Optional[dict[str, str]] = None,
     ) -> None:
         self.image = image
-        self.mounts = mounts
+        self.mounts = (
+            DEFAULT_CONTAINER_MOUNT_SPEC.model_copy(deep=True)
+            if mounts is None
+            else mounts
+        )
         self.env = env
         self._container_id: str | None = None
 
         super().__init__(
+            room=room,
             name=name,
             input_model=_ContainerShellInput,
             description=description,
@@ -736,7 +706,7 @@ class ContainerShellTool(BaseContainerShellTool):
 
         is_running = False
         if self._container_id is not None:
-            for container in await context.room.containers.list():
+            for container in await self.room.containers.list():
                 if container.id == self._container_id:
                     is_running = True
                     break
@@ -748,7 +718,7 @@ class ContainerShellTool(BaseContainerShellTool):
             env = dict(self.env or {})
             for key, value in runtime_config_env.items():
                 env.setdefault(key, value)
-            self._container_id = await context.room.containers.run(
+            self._container_id = await self.room.containers.run(
                 command="sleep infinity",
                 image=self.image,
                 mounts=run_mounts,
@@ -927,43 +897,6 @@ class ProcessShellTool(FunctionTool):
         return _shell_execution_output(results=results)
 
 
-class ContainerToolkitConfig(BaseModel):
-    name: Literal["container"] = "container"
-
-
-class ContainerToolkitBuilder(ToolkitBuilder):
-    def __init__(
-        self,
-        *,
-        name: str = "container",
-        working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
-        mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
-        env: Optional[dict[str, str]] = None,
-    ) -> None:
-        super().__init__(name=name, type=ContainerToolkitConfig)
-        self.working_dir = working_dir
-        self.image = image
-        self.mounts = mounts
-        self.env = env
-
-    async def make(
-        self,
-        *,
-        model: str,
-        config: ContainerToolkitConfig,
-    ) -> Toolkit:
-        del model
-        del config
-        return ContainerToolkit(
-            name=self.name,
-            working_dir=self.working_dir,
-            default_image=self.image,
-            mounts=self.mounts,
-            env=self.env,
-        )
-
-
 class _ListManagedContainersTool(FunctionTool):
     def __init__(self, *, manager: _ManagedContainerManager) -> None:
         self._manager = manager
@@ -997,10 +930,11 @@ class _ListManagedContainersTool(FunctionTool):
         return {"containers": containers}
 
 
-class _StartManagedContainerTool(FunctionTool):
-    def __init__(self, *, manager: _ManagedContainerManager) -> None:
+class _StartManagedContainerTool(LocalRoomTool):
+    def __init__(self, *, manager: _ManagedContainerManager, room: RoomClient) -> None:
         self._manager = manager
         super().__init__(
+            room=room,
             name="start_container",
             title="start container",
             description="start a new shell container and add it to this toolkit",
@@ -1026,7 +960,7 @@ class _StartManagedContainerTool(FunctionTool):
             }
         )
         container_id = await self._manager.start_container(
-            room=context.room,
+            room=self.room,
             image=parsed.image,
             mounts=parsed.mounts,
             env=parsed.env,
@@ -1035,10 +969,11 @@ class _StartManagedContainerTool(FunctionTool):
         return {"container_id": container_id}
 
 
-class _StopManagedContainerTool(FunctionTool):
-    def __init__(self, *, manager: _ManagedContainerManager) -> None:
+class _StopManagedContainerTool(LocalRoomTool):
+    def __init__(self, *, manager: _ManagedContainerManager, room: RoomClient) -> None:
         self._manager = manager
         super().__init__(
+            room=room,
             name="stop_managed_container",
             title="stop managed container",
             description="stop and delete a container managed by this toolkit",
@@ -1056,16 +991,17 @@ class _StopManagedContainerTool(FunctionTool):
             {"container_id": container_id}
         )
         await self._manager.stop_container(
-            room=context.room,
+            room=self.room,
             container_id=parsed.container_id,
         )
         return {"container_id": parsed.container_id, "ok": True}
 
 
 class _RunInContainerTool(BaseContainerShellTool):
-    def __init__(self, *, manager: _ManagedContainerManager) -> None:
+    def __init__(self, *, manager: _ManagedContainerManager, room: RoomClient) -> None:
         self._manager = manager
         super().__init__(
+            room=room,
             name="run_in_container",
             input_model=_ManagedContainerShellInput,
             title="run in container",
@@ -1101,6 +1037,7 @@ class ContainerToolkit(Toolkit):
     def __init__(
         self,
         *,
+        room: RoomClient,
         name: str = "container",
         working_dir: Optional[str] = None,
         default_image: Optional[str] = "python:3.13",
@@ -1109,24 +1046,27 @@ class ContainerToolkit(Toolkit):
     ) -> None:
         self.default_image = default_image
         self.default_mounts = (
-            mounts.model_copy(deep=True) if mounts is not None else None
+            DEFAULT_CONTAINER_MOUNT_SPEC.model_copy(deep=True)
+            if mounts is None
+            else mounts.model_copy(deep=True)
         )
         self.default_env = dict(env) if env is not None else {}
         self.default_working_dir = working_dir
         self._manager = _ManagedContainerManager(
             default_image=default_image,
-            default_mounts=mounts,
+            default_mounts=self.default_mounts,
             default_env=env,
             default_working_dir=working_dir,
         )
 
         super().__init__(
             name=name,
+            room=room,
             tools=[
                 _ListManagedContainersTool(manager=self._manager),
-                _StartManagedContainerTool(manager=self._manager),
-                _StopManagedContainerTool(manager=self._manager),
-                _RunInContainerTool(manager=self._manager),
+                _StartManagedContainerTool(manager=self._manager, room=room),
+                _StopManagedContainerTool(manager=self._manager, room=room),
+                _RunInContainerTool(manager=self._manager, room=room),
             ],
         )
 

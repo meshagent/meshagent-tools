@@ -2,14 +2,12 @@ import asyncio
 import logging
 import os
 from collections.abc import AsyncIterable
-from typing import Literal, Optional
-
-from pydantic import BaseModel
+from typing import Optional
 
 from meshagent.api import RoomClient
 from meshagent.api.specs.service import ContainerMountSpec, RoomStorageMountSpec
-from meshagent.tools.tool import FunctionTool, ToolContext
-from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
+from meshagent.tools.tool import FunctionTool, LocalRoomTool, ToolContext
+from meshagent.tools.toolkit import Toolkit
 
 from ._shell_output import (
     DEFAULT_MAX_LOG_LINE_LENGTH,
@@ -59,58 +57,11 @@ async def _await_output_tasks(*tasks: asyncio.Task[None]) -> None:
             logger.debug("script output stream task failed", exc_info=result)
 
 
-class ScriptToolConfig(BaseModel):
-    name: Literal["script"] = "script"
-    service_id: Optional[str] = None
-    commands: list[str] = None
-    description: Optional[str] = None
-    title: Optional[str] = None
-    tool_name: str
-
-
-class ScriptToolkitBuilder(ToolkitBuilder):
+class ScriptTool(LocalRoomTool):
     def __init__(
         self,
         *,
-        name: str = "script",
-        commands: Optional[list[str]] = None,
-        working_dir: Optional[str] = None,
-        image: Optional[str] = "python:3.13",
-        mounts: Optional[ContainerMountSpec] = DEFAULT_CONTAINER_MOUNT_SPEC,
-        input_schema: Optional[dict] = None,
-    ):
-        super().__init__(name=name, type=ScriptToolConfig)
-
-        self.working_dir = working_dir
-        self.image = image
-        self.mounts = mounts
-        self.commands = commands
-        self.input_schema = input_schema
-
-    async def make(self, *, model: str, config: ScriptToolConfig):
-        del model
-        return Toolkit(
-            name=self.name,
-            tools=[
-                ScriptTool(
-                    name=config.tool_name,
-                    description=config.description,
-                    title=config.title,
-                    service_id=config.service_id,
-                    working_dir=self.working_dir,
-                    image=self.image,
-                    commands=self.commands or config.commands,
-                    mounts=self.mounts,
-                    input_schema=self.input_schema,
-                )
-            ],
-        )
-
-
-class ScriptTool(FunctionTool):
-    def __init__(
-        self,
-        *,
+        room: RoomClient,
         name: str,
         commands: list[str],
         description: Optional[str] = None,
@@ -136,6 +87,7 @@ class ScriptTool(FunctionTool):
         self.commands = commands
 
         super().__init__(
+            room=room,
             name=name,
             description=description,
             title=title,
@@ -169,11 +121,12 @@ class ScriptTool(FunctionTool):
             if self._container_id:
                 # make sure container is still running
 
-                for c in await context.room.containers.list():
+                for c in await self.room.containers.list():
                     if c.id == self._container_id or (
                         self.service_id is not None and c.service_id == self.service_id
                     ):
                         running = True
+                        break
 
             if not running:
                 if self.service_id is not None:
@@ -186,13 +139,13 @@ class ScriptTool(FunctionTool):
                             f"executing shell script in container with env {env}"
                         )
 
-                    self._container_id = await context.room.containers.run_service(
+                    self._container_id = await self.room.containers.run_service(
                         service_id=self.service_id,
                         env=env,
                     )
 
                 else:
-                    self._container_id = await context.room.containers.run(
+                    self._container_id = await self.room.containers.run(
                         command="sleep infinity",
                         image=self.image,
                         mounts=self.mounts,
@@ -228,7 +181,7 @@ class ScriptTool(FunctionTool):
                 try:
                     # TODO: what if container start fails
 
-                    container_exec = await context.room.containers.exec(
+                    container_exec = await self.room.containers.exec(
                         container_id=container_id,
                         command=["bash", "-c", line],
                         tty=False,
@@ -416,6 +369,7 @@ async def get_script_tools(room: RoomClient):
 
                     st.append(
                         ScriptTool(
+                            room=room,
                             name=tool_name,
                             description=description,
                             service_id=service.id,

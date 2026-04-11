@@ -144,11 +144,10 @@ def test_merge_container_mounts_preserves_config_mounts() -> None:
 async def test_container_shell_tool_emits_live_output_events() -> None:
     room = _FakeRoom()
     emitted: list[dict] = []
-    tool = ContainerShellTool(working_dir="/workspace")
+    tool = ContainerShellTool(room=room, working_dir="/workspace")
 
     result = await tool.execute(
         context=ToolContext(
-            room=room,
             caller=object(),
             caller_context={"item_id": "tool-1"},
             event_handler=emitted.append,
@@ -196,13 +195,13 @@ async def test_container_shell_tool_config_mounts_expand_runtime_files(
 
     room = _FakeRoom()
     tool = ContainerShellTool(
+        room=room,
         image="busybox:latest",
         mounts=ContainerMountSpec(configs=[ConfigMountSpec(path="/var/run/meshagent")]),
     )
 
     await tool.execute(
         context=ToolContext(
-            room=room,
             caller=object(),
         ),
         commands=["pwd"],
@@ -241,11 +240,10 @@ async def test_container_shell_tool_timeout_omits_exit_code() -> None:
         exit_code=None,
     )
     room.containers.next_exec = timed_out_exec
-    tool = ContainerShellTool(working_dir="/workspace")
+    tool = ContainerShellTool(room=room, working_dir="/workspace")
 
     result = await tool.execute(
         context=ToolContext(
-            room=room,
             caller=object(),
         ),
         commands=["sleep 5"],
@@ -267,11 +265,10 @@ async def test_container_shell_tool_timeout_omits_exit_code() -> None:
 @pytest.mark.asyncio
 async def test_container_shell_tool_stop_stops_and_deletes_cached_container() -> None:
     room = _FakeRoom()
-    tool = ContainerShellTool()
+    tool = ContainerShellTool(room=room)
 
     await tool.execute(
         context=ToolContext(
-            room=room,
             caller=object(),
         ),
         commands=["printf 'hello\\n'"],
@@ -298,11 +295,10 @@ async def test_container_shell_tool_truncates_success_output_by_default(
         stderr_chunks=[],
     )
     emitted: list[dict] = []
-    tool = ContainerShellTool()
+    tool = ContainerShellTool(room=room)
 
     result = await tool.execute(
         context=ToolContext(
-            room=room,
             caller=object(),
             caller_context={"item_id": "tool-1"},
             event_handler=emitted.append,
@@ -347,11 +343,10 @@ async def test_container_shell_tool_chunks_long_single_log_lines(
         stderr_chunks=[],
     )
     emitted: list[dict] = []
-    tool = ContainerShellTool()
+    tool = ContainerShellTool(room=room)
 
     result = await tool.execute(
         context=ToolContext(
-            room=room,
             caller=object(),
             caller_context={"item_id": "tool-1"},
             event_handler=emitted.append,
@@ -392,7 +387,6 @@ async def test_process_shell_tool_uses_working_dir_and_env(
 
     result = await tool.execute(
         context=ToolContext(
-            room=object(),  # type: ignore[arg-type]
             caller=object(),  # type: ignore[arg-type]
             caller_context={"item_id": "tool-1"},
             event_handler=emitted.append,
@@ -425,7 +419,6 @@ async def test_process_shell_tool_truncates_success_output_by_default() -> None:
 
     result = await tool.execute(
         context=ToolContext(
-            room=object(),  # type: ignore[arg-type]
             caller=object(),  # type: ignore[arg-type]
             caller_context={"item_id": "tool-1"},
             event_handler=emitted.append,
@@ -462,11 +455,12 @@ async def test_process_shell_tool_truncates_success_output_by_default() -> None:
 async def test_container_toolkit_manages_container_lifecycle() -> None:
     room = _FakeRoom()
     toolkit = ContainerToolkit(
+        room=room,
         working_dir="/workspace",
         default_image="python:3.13",
         env={"BASE": "1"},
     )
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     start_result = await toolkit.invoke(
         context=context,
@@ -581,6 +575,7 @@ async def test_container_toolkit_start_container_preserves_default_config_mounts
 
     room = _FakeRoom()
     toolkit = ContainerToolkit(
+        room=room,
         default_image="busybox:latest",
         mounts=ContainerMountSpec(configs=[ConfigMountSpec(path="/var/run/meshagent")]),
     )
@@ -625,8 +620,8 @@ async def test_container_toolkit_start_container_preserves_default_config_mounts
 @pytest.mark.asyncio
 async def test_container_toolkit_rejects_unmanaged_containers() -> None:
     room = _FakeRoom()
-    toolkit = ContainerToolkit(default_image="python:3.13")
-    context = ToolContext(room=room, caller=object())
+    toolkit = ContainerToolkit(room=room, default_image="python:3.13")
+    context = ToolContext(caller=object())
 
     with pytest.raises(Exception, match="not managed by this toolkit"):
         await toolkit.invoke(

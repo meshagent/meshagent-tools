@@ -235,7 +235,7 @@ class _FakeRoom:
 
 
 def test_memories_tool_schemas_remain_strict_for_openai() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph")
+    toolkit = MemoriesToolkit(room=_FakeRoom(), memory_name="graph")
     required_by_tool = {
         tool.name: set((tool.input_schema or {}).get("required", []))
         for tool in toolkit.tools
@@ -274,14 +274,15 @@ def test_memories_tool_schemas_remain_strict_for_openai() -> None:
 
 @pytest.mark.asyncio
 async def test_add_memory_uses_llm_ingest_text() -> None:
+    room = _FakeRoom()
     toolkit = MemoriesToolkit(
+        room=room,
         memory_name="graph",
         namespace=["team"],
         llm_model="gpt-5.2",
         llm_temperature=0.2,
     )
-    room = _FakeRoom()
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -308,9 +309,9 @@ async def test_add_memory_uses_llm_ingest_text() -> None:
 
 @pytest.mark.asyncio
 async def test_search_memories_creates_memory_store_when_missing() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
     room = _FakeRoom()
-    context = ToolContext(room=room, caller=object())
+    toolkit = MemoriesToolkit(room=room, memory_name="graph", namespace=["team"])
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -332,13 +333,13 @@ async def test_search_memories_creates_memory_store_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_search_memories_ignores_create_permission_error() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph")
     room = _FakeRoom()
+    toolkit = MemoriesToolkit(room=room, memory_name="graph")
     room.memory.create_exception = RoomException(
         "you do not have permission to perform the requested action",
         code=ErrorCode.PERMISSION_DENIED,
     )
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -352,13 +353,13 @@ async def test_search_memories_ignores_create_permission_error() -> None:
 
 @pytest.mark.asyncio
 async def test_search_memories_returns_no_memories_yet_when_missing() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph")
     room = _FakeRoom()
+    toolkit = MemoriesToolkit(room=room, memory_name="graph")
     room.memory.recall_exception = RoomException(
         "memory does not exist: graph",
         code=ErrorCode.MEMORY_NOT_FOUND,
     )
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -376,9 +377,9 @@ async def test_search_memories_returns_no_memories_yet_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_search_memories_uses_recall_like_ask_button() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
     room = _FakeRoom()
-    context = ToolContext(room=room, caller=object())
+    toolkit = MemoriesToolkit(room=room, memory_name="graph", namespace=["team"])
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -410,9 +411,9 @@ async def test_search_memories_uses_recall_like_ask_button() -> None:
 
 @pytest.mark.asyncio
 async def test_search_memories_uses_custom_toolkit_search_limit() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph", search_limit=7)
     room = _FakeRoom()
-    context = ToolContext(room=room, caller=object())
+    toolkit = MemoriesToolkit(room=room, memory_name="graph", search_limit=7)
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -429,8 +430,8 @@ async def test_search_memories_uses_custom_toolkit_search_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_get_recent_memories_uses_temporal_sorting() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
     room = _FakeRoom()
+    toolkit = MemoriesToolkit(room=room, memory_name="graph", namespace=["team"])
     room.memory.next_query_results = [
         [
             {
@@ -444,7 +445,7 @@ async def test_get_recent_memories_uses_temporal_sorting() -> None:
             }
         ]
     ]
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -473,13 +474,13 @@ async def test_get_recent_memories_uses_temporal_sorting() -> None:
 
 @pytest.mark.asyncio
 async def test_get_recent_memories_returns_empty_when_memory_is_missing() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
     room = _FakeRoom()
+    toolkit = MemoriesToolkit(room=room, memory_name="graph", namespace=["team"])
     room.memory.query_exception = RoomException(
         "memory does not exist: graph",
         code=ErrorCode.MEMORY_NOT_FOUND,
     )
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -493,8 +494,8 @@ async def test_get_recent_memories_returns_empty_when_memory_is_missing() -> Non
 
 @pytest.mark.asyncio
 async def test_get_recent_relationships_uses_temporal_sorting_and_filters() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph")
     room = _FakeRoom()
+    toolkit = MemoriesToolkit(room=room, memory_name="graph")
     room.memory.next_query_results = [
         [
             {
@@ -512,7 +513,7 @@ async def test_get_recent_relationships_uses_temporal_sorting_and_filters() -> N
             }
         ]
     ]
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -555,8 +556,8 @@ async def test_get_recent_relationships_uses_temporal_sorting_and_filters() -> N
 
 @pytest.mark.asyncio
 async def test_get_entity_queries_by_entity_id() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph")
     room = _FakeRoom()
+    toolkit = MemoriesToolkit(room=room, memory_name="graph")
     room.memory.next_query_results = [
         [
             {
@@ -568,7 +569,7 @@ async def test_get_entity_queries_by_entity_id() -> None:
             }
         ]
     ]
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -586,10 +587,10 @@ async def test_get_entity_queries_by_entity_id() -> None:
 
 @pytest.mark.asyncio
 async def test_get_entity_returns_none_when_missing() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph")
     room = _FakeRoom()
+    toolkit = MemoriesToolkit(room=room, memory_name="graph")
     room.memory.next_query_results = [[]]
-    context = ToolContext(room=room, caller=object())
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -604,9 +605,9 @@ async def test_get_entity_returns_none_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_entity_uses_delete_entities_api() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph")
     room = _FakeRoom()
-    context = ToolContext(room=room, caller=object())
+    toolkit = MemoriesToolkit(room=room, memory_name="graph")
+    context = ToolContext(caller=object())
 
     delete_result = await toolkit.execute(
         context=context,
@@ -628,9 +629,9 @@ async def test_delete_entity_uses_delete_entities_api() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_relationship_uses_delete_relationships_api() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
     room = _FakeRoom()
-    context = ToolContext(room=room, caller=object())
+    toolkit = MemoriesToolkit(room=room, memory_name="graph", namespace=["team"])
+    context = ToolContext(caller=object())
 
     result = await toolkit.execute(
         context=context,
@@ -665,9 +666,9 @@ async def test_delete_relationship_uses_delete_relationships_api() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_all_memories_requires_confirm_and_recreates() -> None:
-    toolkit = MemoriesToolkit(memory_name="graph", namespace=["team"])
     room = _FakeRoom()
-    context = ToolContext(room=room, caller=object())
+    toolkit = MemoriesToolkit(room=room, memory_name="graph", namespace=["team"])
+    context = ToolContext(caller=object())
 
     with pytest.raises(ValueError):
         await toolkit.execute(

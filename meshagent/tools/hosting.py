@@ -28,23 +28,13 @@ from meshagent.tools.toolkit import InvalidToolDataException, Toolkit, Validatio
 
 from aiohttp import web
 
-from typing import Optional, Callable, Any, cast
+from typing import Optional, Callable, Any
 from collections.abc import AsyncIterable, Awaitable
 import asyncio
 from warnings import deprecated
 import signal
 
 logger = logging.getLogger("hosting")
-
-
-class _UnavailableToolContextRoom:
-    def __getattribute__(self, name: str) -> Any:
-        raise RuntimeError(
-            "ToolContext.room is unavailable for locally hosted room toolkits"
-        )
-
-
-_UNAVAILABLE_TOOL_CONTEXT_ROOM = cast(RoomClient, _UnavailableToolContextRoom())
 
 
 def _error_content_for_exception(ex: Exception) -> ErrorContent:
@@ -109,7 +99,6 @@ async def stream_tool_call(
             event_handler = handle_event
 
         context = ToolContext(
-            room=room if room is not None else _UNAVAILABLE_TOOL_CONTEXT_ROOM,
             caller=caller,
             on_behalf_of=on_behalf_of,
             caller_context=caller_context,
@@ -176,6 +165,7 @@ class RemoteTool(FunctionTool):
         thumbnail_url=None,
         defs=None,
     ):
+        self._room: RoomClient | None = None
         super().__init__(
             name=name,
             input_schema=input_schema,
@@ -186,16 +176,22 @@ class RemoteTool(FunctionTool):
             thumbnail_url=thumbnail_url,
             defs=defs,
         )
-        self._room = None
+
+    @property
+    def room(self) -> RoomClient:
+        if self._room is None:
+            raise RuntimeError(
+                f"Remote tool '{self.name}' requires start(room=...) before use"
+            )
+        return self._room
 
     async def start(self, *, room: RoomClient):
         if self._room is not None:
             raise RoomException("room is already started")
-
         self._room = room
 
     async def stop(self):
-        pass
+        self._room = None
 
 
 class _RemoteToolkitWrapper(Toolkit):
@@ -274,6 +270,9 @@ class _RemoteToolkitWrapper(Toolkit):
         return self._room
 
     async def start(self, *, room: RoomClient):
+        if self._room is not None:
+            raise RoomException("room is already started")
+
         starts = []
 
         for tool in self.tools:
@@ -287,9 +286,6 @@ class _RemoteToolkitWrapper(Toolkit):
                 logger.error(
                     f"Unable to start remote tool in toolkit {self.name}", exc_info=r
                 )
-
-        if self._room is not None:
-            raise RoomException("room is already started")
 
         self._room = room
 

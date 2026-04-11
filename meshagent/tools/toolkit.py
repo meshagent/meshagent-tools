@@ -19,7 +19,6 @@ from meshagent.api.messaging import (
     ensure_content,
 )
 from meshagent.api.room_server_client import RoomException
-from meshagent.tools.config import ToolkitConfig
 from meshagent.tools.tool import (
     ToolContext,
     BaseTool,
@@ -96,19 +95,6 @@ def build_tool_span_name(
     return f"{operation}.{toolkit_name}.{tool_name}"
 
 
-class ToolkitConfig(ToolkitConfig):
-    toolkit: str
-    tool: str
-
-
-class ToolkitBuilder:
-    def __init__(self, *, name: str, type: type):
-        self.name = name
-        self.type = type
-
-    async def make(self, *, model: str, config: ToolkitConfig) -> "Toolkit": ...
-
-
 class Toolkit:
     def __init__(
         self,
@@ -121,6 +107,7 @@ class Toolkit:
         thumbnail_url: Optional[str] = None,
         validation_mode: ValidationMode = "full",
         public: bool = True,
+        room: RoomClient | None = None,
     ):
         if validation_mode not in ("full", "content_types", "none"):
             raise ValueError(
@@ -139,6 +126,15 @@ class Toolkit:
         self.thumbnail_url = thumbnail_url
         self.validation_mode: ValidationMode = validation_mode
         self.public = public
+        self._room = room
+
+    @property
+    def room(self) -> RoomClient:
+        if self._room is None:
+            raise RuntimeError(
+                f"Toolkit '{self.name}' requires a bound RoomClient before use"
+            )
+        return self._room
 
     @staticmethod
     def _should_validate_content_types(*, validation_mode: ValidationMode) -> bool:
@@ -559,50 +555,3 @@ class Toolkit:
             validation_mode=validation_mode,
         )
         return normalized_output
-
-
-async def make_toolkits(
-    *,
-    room: RoomClient,
-    model: str,
-    providers: list[ToolkitBuilder],
-    tools: list[ToolkitConfig],
-) -> list[Toolkit]:
-    from meshagent.tools.database import DatabaseToolkitConfig, make_database_toolkit
-
-    result = []
-    if tools is not None:
-        for config in tools:
-            found = False
-            if isinstance(config, dict):
-                if config["name"] == "database":
-                    typed_config = DatabaseToolkitConfig.model_validate(config)
-                    result.append(
-                        await make_database_toolkit(room=room, config=typed_config)
-                    )
-                    found = True
-                    continue
-
-                for t in providers:
-                    if t.name == config["name"]:
-                        config = t.type.model_validate(config)
-                        result.append(await t.make(model=model, config=config))
-                        found = True
-                        break
-
-            else:
-                if isinstance(config, DatabaseToolkitConfig):
-                    result.append(await make_database_toolkit(room=room, config=config))
-                    found = True
-                    continue
-
-                for t in providers:
-                    if t.type is type(config):
-                        result.append(await t.make(model=model, config=config))
-                        found = True
-                        break
-
-            if not found:
-                raise RoomException(f"tool cannot be configured: {config}")
-
-    return result

@@ -1,7 +1,6 @@
-from .config import ToolkitConfig
-from .tool import FunctionTool
+from .tool import LocalRoomTool
 from .toolkit import ToolContext, Toolkit
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 from meshagent.api.room_server_client import (
     BinaryDataType,
     DataType,
@@ -156,8 +155,12 @@ def _normalize_database_tool_rows(rows: list[dict[str, Any]]) -> list[dict[str, 
     return decode_records(rows)
 
 
-class ListTablesTool(FunctionTool):
-    def __init__(self):
+class _DatabaseTool(LocalRoomTool):
+    pass
+
+
+class ListTablesTool(_DatabaseTool):
+    def __init__(self, *, room: RoomClient):
         input_schema = {
             "type": "object",
             "required": [],
@@ -166,6 +169,7 @@ class ListTablesTool(FunctionTool):
         }
 
         super().__init__(
+            room=room,
             name="list_tables",
             title="list tables",
             description="list the tables in the room",
@@ -173,13 +177,15 @@ class ListTablesTool(FunctionTool):
         )
 
     async def execute(self, context: ToolContext):
-        return {"tables": await context.room.database.list_tables()}
+        del context
+        return {"tables": await self.room.database.list_tables()}
 
 
-class InsertRowsTool(FunctionTool):
+class InsertRowsTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -202,6 +208,7 @@ class InsertRowsTool(FunctionTool):
             )
 
         super().__init__(
+            room=room,
             name=f"insert_{table}_rows",
             title=f"insert {table} rows",
             description=f"insert rows into the {table} table",
@@ -214,17 +221,19 @@ class InsertRowsTool(FunctionTool):
         )
 
     async def execute(self, context: ToolContext, *, rows):
-        await context.room.database.insert(
+        del context
+        await self.room.database.insert(
             table=self.table,
             records=_normalize_database_tool_rows(rows),
             namespace=self.namespace,
         )
 
 
-class DeleteRowsTool(FunctionTool):
+class DeleteRowsTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -244,6 +253,7 @@ class DeleteRowsTool(FunctionTool):
             input_schema["properties"][k] = _tool_input_schema_for_data_type(v)
 
         super().__init__(
+            room=room,
             name=f"delete_{table}_rows",
             title=f"delete {table} rows",
             description=f"delete from {table} where rows match the specified values (specify null for a column to exclude it from the search)",
@@ -251,6 +261,7 @@ class DeleteRowsTool(FunctionTool):
         )
 
     async def execute(self, context: ToolContext, **values):
+        del context
         search = {}
 
         for k, v in values.items():
@@ -259,7 +270,7 @@ class DeleteRowsTool(FunctionTool):
         if search:
             search = _normalize_database_tool_record(search)
 
-        await context.room.database.delete(
+        await self.room.database.delete(
             table=self.table,
             where=search if len(search) > 0 else None,
             namespace=self.namespace,
@@ -267,10 +278,11 @@ class DeleteRowsTool(FunctionTool):
         return {"ok": True}
 
 
-class UpdateTool(FunctionTool):
+class UpdateTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -321,6 +333,7 @@ class UpdateTool(FunctionTool):
         }
 
         super().__init__(
+            room=room,
             name=f"update_{table}_rows",
             title=f"update {table} rows",
             description=f"update {table} table where rows match the specified filter (with a lancedb compatible filter)",
@@ -328,23 +341,25 @@ class UpdateTool(FunctionTool):
         )
 
     async def execute(self, context: ToolContext, *, where: str, values: list[dict]):
+        del context
         set = {}
         for value in values:
             for k, v in value.items():
                 set[k] = v
         set = _normalize_database_tool_record(set)
 
-        await context.room.database.update(
+        await self.room.database.update(
             table=self.table, where=where, values=set, namespace=self.namespace
         )
 
         return {"ok": True}
 
 
-class SearchTool(FunctionTool):
+class SearchTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -382,6 +397,7 @@ class SearchTool(FunctionTool):
         }
 
         super().__init__(
+            room=room,
             name=f"search_{table}",
             title=f"search {table}",
             description=f"search {table} table for rows with the specified values (specify null for a column to exclude it from the search)",
@@ -396,6 +412,7 @@ class SearchTool(FunctionTool):
         offset: int,
         select: list[str],
     ):
+        del context
         search = {}
 
         for k, v in query.items():
@@ -405,7 +422,7 @@ class SearchTool(FunctionTool):
             search = _normalize_database_tool_record(search)
 
         return {
-            "rows": await context.room.database.search(
+            "rows": await self.room.database.search(
                 select=select,
                 table=self.table,
                 where=search if len(search) > 0 else None,
@@ -416,10 +433,11 @@ class SearchTool(FunctionTool):
         }
 
 
-class LLMSearchTool(FunctionTool):
+class LLMSearchTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -457,6 +475,7 @@ class LLMSearchTool(FunctionTool):
         }
 
         super().__init__(
+            room=room,
             name=f"search_{table}",
             title=f"search {table}",
             description=f"search {table} table for rows with the specified values (specify null for a column to exclude it from the search)",
@@ -471,6 +490,7 @@ class LLMSearchTool(FunctionTool):
         offset: int,
         select: list[str],
     ):
+        del context
         search = {}
 
         for k, v in query.items():
@@ -480,7 +500,7 @@ class LLMSearchTool(FunctionTool):
             search = _normalize_database_tool_record(search)
 
         return {
-            "rows": await context.room.database.search(
+            "rows": await self.room.database.search(
                 select=select,
                 table=self.table,
                 where=search if len(search) > 0 else None,
@@ -491,10 +511,11 @@ class LLMSearchTool(FunctionTool):
         }
 
 
-class SpawnTaskForEachRow(FunctionTool):
+class SpawnTaskForEachRow(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         prompt: str,
@@ -540,6 +561,7 @@ class SpawnTaskForEachRow(FunctionTool):
 
         print(input_schema)
         super().__init__(
+            room=room,
             name=name or f"spawn_task_for_each_{table}_row",
             title=title or f"Spawn task for each {table} row",
             description=description
@@ -571,7 +593,7 @@ class SpawnTaskForEachRow(FunctionTool):
         if search:
             search = _normalize_database_tool_record(search)
 
-        rows = await context.room.database.search(
+        rows = await self.room.database.search(
             select=select,
             table=self.table,
             where=search if len(search) > 0 else None,
@@ -585,17 +607,18 @@ class SpawnTaskForEachRow(FunctionTool):
         )
 
         for row in rows:
-            await context.room.queues.send(
+            await self.room.queues.send(
                 name=self.queue, message=self.make_message(context=context, row=row)
             )
 
         return {f"added {len(row)} items to the queue {self.queue}"}
 
 
-class CountTool(FunctionTool):
+class CountTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -624,6 +647,7 @@ class CountTool(FunctionTool):
             query["properties"][k] = _tool_input_schema_for_data_type(v)
 
         super().__init__(
+            room=room,
             name=f"count_{table}",
             title=f"count_{table}",
             description=f"count matching rows in the {table} table",
@@ -631,6 +655,7 @@ class CountTool(FunctionTool):
         )
 
     async def execute(self, context: ToolContext, query: object):
+        del context
         search = {}
 
         for k, v in query.items():
@@ -640,7 +665,7 @@ class CountTool(FunctionTool):
             search = _normalize_database_tool_record(search)
 
         return {
-            "rows": await context.room.database.count(
+            "rows": await self.room.database.count(
                 table=self.table,
                 where=search if len(search) > 0 else None,
                 namespace=self.namespace,
@@ -648,10 +673,11 @@ class CountTool(FunctionTool):
         }
 
 
-class AdvancedSearchTool(FunctionTool):
+class AdvancedSearchTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -677,6 +703,7 @@ class AdvancedSearchTool(FunctionTool):
         }
 
         super().__init__(
+            room=room,
             name=f"advanced_search_{table}",
             title=f"advanced search {table}",
             description=f"advanced search {table} table with a lancedb compatible filter",
@@ -684,17 +711,19 @@ class AdvancedSearchTool(FunctionTool):
         )
 
     async def execute(self, context: ToolContext, *, where: str):
+        del context
         return {
-            "rows": await context.room.database.search(
+            "rows": await self.room.database.search(
                 table=self.table, where=where, namespace=self.namespace
             )
         }
 
 
-class AdvancedDeleteRowsTool(FunctionTool):
+class AdvancedDeleteRowsTool(_DatabaseTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         table: str,
         schema: dict[str, DataType],
         namespace: Optional[list[str]] = None,
@@ -719,6 +748,7 @@ class AdvancedDeleteRowsTool(FunctionTool):
         }
 
         super().__init__(
+            room=room,
             name=f"advanced_delete_{table}",
             title=f"advanced delete {table}",
             description=f"advanced search {table} table with a lancedb compatible filter and delete the matching rows",
@@ -726,7 +756,8 @@ class AdvancedDeleteRowsTool(FunctionTool):
         )
 
     async def execute(self, context: ToolContext, *, where: str):
-        await context.room.database.delete(
+        del context
+        await self.room.database.delete(
             table=self.table, where=where, namespace=self.namespace
         )
         return {"ok": True}
@@ -739,6 +770,7 @@ class DatabaseToolkit(Toolkit):
         tables: dict[str, dict[str, DataType]],
         read_only: bool = False,
         namespace: Optional[list[str]] = None,
+        room: RoomClient,
     ):
         tools = [
             # ListTablesTool()
@@ -747,54 +779,71 @@ class DatabaseToolkit(Toolkit):
         for table, schema in tables.items():
             if not read_only:
                 tools.append(
-                    InsertRowsTool(table=table, schema=schema, namespace=namespace)
+                    InsertRowsTool(
+                        room=room,
+                        table=table,
+                        schema=schema,
+                        namespace=namespace,
+                    )
                 )
                 tools.append(
-                    UpdateTool(table=table, schema=schema, namespace=namespace)
+                    UpdateTool(
+                        room=room,
+                        table=table,
+                        schema=schema,
+                        namespace=namespace,
+                    )
                 )
                 # tools.append(
                 #    DeleteRowsTool(table=table, schema=schema, namespace=namespace)
                 # )
                 tools.append(
                     AdvancedDeleteRowsTool(
-                        table=table, schema=schema, namespace=namespace
+                        room=room,
+                        table=table,
+                        schema=schema,
+                        namespace=namespace,
                     )
                 )
 
-            tools.append(CountTool(table=table, schema=schema, namespace=namespace))
+            tools.append(
+                CountTool(room=room, table=table, schema=schema, namespace=namespace)
+            )
             # tools.append(SearchTool(table=table, schema=schema, namespace=namespace))
             tools.append(
-                AdvancedSearchTool(table=table, schema=schema, namespace=namespace)
+                AdvancedSearchTool(
+                    room=room,
+                    table=table,
+                    schema=schema,
+                    namespace=namespace,
+                )
             )
 
         super().__init__(
             name="database",
             title="database",
             description="tools for interacting with meshagent databases",
+            room=room,
             tools=tools,
         )
-
-
-class DatabaseToolkitConfig(ToolkitConfig):
-    name: Literal["database"] = "database"
-    tables: list[str]
-    namespace: Optional[list[str]] = None
-    read_only: bool
 
 
 async def make_database_toolkit(
     *,
     room: RoomClient,
-    config: DatabaseToolkitConfig,
+    tables: list[str],
+    read_only: bool,
+    namespace: Optional[list[str]] = None,
 ) -> DatabaseToolkit:
-    tables = {}
-    for table in config.tables:
-        tables[table] = await room.database.inspect(
+    table_schemas = {}
+    for table in tables:
+        table_schemas[table] = await room.database.inspect(
             table=table,
-            namespace=config.namespace,
+            namespace=namespace,
         )
     return DatabaseToolkit(
-        tables=tables,
-        read_only=config.read_only,
-        namespace=config.namespace,
+        tables=table_schemas,
+        read_only=read_only,
+        namespace=namespace,
+        room=room,
     )

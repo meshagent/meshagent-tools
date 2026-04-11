@@ -1,16 +1,16 @@
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 
 from meshagent.api import ErrorCode
 from meshagent.api.room_server_client import (
     MemoryRelationshipSelector,
     MemoryRecallItem,
+    RoomClient,
     RoomException,
 )
 
-from .config import ToolkitConfig
 from .strict_schema import ensure_strict_json_schema
-from .tool import FunctionTool
-from .toolkit import ToolContext, Toolkit, ToolkitBuilder
+from .tool import LocalRoomTool
+from .toolkit import ToolContext, Toolkit
 
 
 def _escape_query_value(value: str) -> str:
@@ -68,10 +68,11 @@ def _entity_from_recall_item(item: MemoryRecallItem) -> dict[str, Any]:
     }
 
 
-class _MemoriesTool(FunctionTool):
+class _MemoriesTool(LocalRoomTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         memory_name: str,
         namespace: Optional[list[str]] = None,
         name: str,
@@ -80,6 +81,7 @@ class _MemoriesTool(FunctionTool):
         input_schema: dict,
     ):
         super().__init__(
+            room=room,
             name=name,
             title=title,
             description=description,
@@ -109,8 +111,9 @@ class _MemoriesTool(FunctionTool):
         return "memory does not exist:" in str(error).lower()
 
     async def _ensure_memory_location(self, context: ToolContext) -> None:
+        del context
         try:
-            await context.room.memory.create(
+            await self.room.memory.create(
                 name=self.memory_name,
                 namespace=self._memory_namespace(),
                 overwrite=False,
@@ -204,7 +207,7 @@ class _MemoriesTool(FunctionTool):
             limit=limit,
         )
         try:
-            return await context.room.memory.query(
+            return await self.room.memory.query(
                 name=self.memory_name,
                 namespace=self._memory_namespace(),
                 statement=statement,
@@ -237,7 +240,7 @@ class _MemoriesTool(FunctionTool):
             limit=limit,
         )
         try:
-            return await context.room.memory.query(
+            return await self.room.memory.query(
                 name=self.memory_name,
                 namespace=self._memory_namespace(),
                 statement=statement,
@@ -258,12 +261,14 @@ class AddMemoryTool(_MemoriesTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         memory_name: str,
         namespace: Optional[list[str]] = None,
         llm_model: Optional[str] = None,
         llm_temperature: Optional[float] = None,
     ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="add_memory",
@@ -291,7 +296,7 @@ class AddMemoryTool(_MemoriesTool):
         memory: str,
     ):
         await self._ensure_memory_location(context)
-        ingest_result = await context.room.memory.ingest_text(
+        ingest_result = await self.room.memory.ingest_text(
             name=self.memory_name,
             namespace=self._memory_namespace(),
             text=memory,
@@ -315,6 +320,7 @@ class SearchMemoriesTool(_MemoriesTool):
     def __init__(
         self,
         *,
+        room: RoomClient,
         memory_name: str,
         namespace: Optional[list[str]] = None,
         recall_limit: int = 20,
@@ -322,6 +328,7 @@ class SearchMemoriesTool(_MemoriesTool):
         if recall_limit < 1:
             raise ValueError("recall_limit must be >= 1")
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="search_memories",
@@ -357,7 +364,7 @@ class SearchMemoriesTool(_MemoriesTool):
             return {"query": query, "memories": []}
 
         try:
-            result = await context.room.memory.recall(
+            result = await self.room.memory.recall(
                 name=self.memory_name,
                 namespace=self._memory_namespace(),
                 query=query,
@@ -387,8 +394,15 @@ class SearchMemoriesTool(_MemoriesTool):
 
 
 class GetRecentMemoriesTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="get_recent_memories",
@@ -435,7 +449,7 @@ class GetRecentMemoriesTool(_MemoriesTool):
             limit=limit,
         )
         try:
-            rows = await context.room.memory.query(
+            rows = await self.room.memory.query(
                 name=self.memory_name,
                 namespace=self._memory_namespace(),
                 statement=statement,
@@ -456,8 +470,15 @@ class GetRecentMemoriesTool(_MemoriesTool):
 
 
 class GetRecentRelationshipsTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="get_recent_relationships",
@@ -527,8 +548,15 @@ class GetRecentRelationshipsTool(_MemoriesTool):
 
 
 class GetMemoriesTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="get_memories",
@@ -579,8 +607,15 @@ class GetMemoriesTool(_MemoriesTool):
 
 
 class GetEntityTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="get_entity",
@@ -612,8 +647,15 @@ class GetEntityTool(_MemoriesTool):
 
 
 class DeleteEntityTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="delete_entity",
@@ -634,7 +676,7 @@ class DeleteEntityTool(_MemoriesTool):
 
     async def execute(self, context: ToolContext, *, entity_id: str):
         await self._ensure_memory_location(context)
-        result = await context.room.memory.delete_entities(
+        result = await self.room.memory.delete_entities(
             name=self.memory_name,
             namespace=self._memory_namespace(),
             entity_ids=[entity_id],
@@ -648,8 +690,15 @@ class DeleteEntityTool(_MemoriesTool):
 
 
 class DeleteRelationshipTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="delete_relationship",
@@ -690,7 +739,7 @@ class DeleteRelationshipTool(_MemoriesTool):
             if isinstance(relationship_type, str) and relationship_type.strip() != ""
             else None
         )
-        result = await context.room.memory.delete_relationships(
+        result = await self.room.memory.delete_relationships(
             name=self.memory_name,
             namespace=self._memory_namespace(),
             relationships=[
@@ -711,8 +760,15 @@ class DeleteRelationshipTool(_MemoriesTool):
 
 
 class DeleteAllMemoriesTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="delete_all_memories",
@@ -735,12 +791,12 @@ class DeleteAllMemoriesTool(_MemoriesTool):
         if not confirm:
             raise ValueError("set confirm=true to delete all memories")
 
-        await context.room.memory.drop(
+        await self.room.memory.drop(
             name=self.memory_name,
             namespace=self._memory_namespace(),
             ignore_missing=True,
         )
-        await context.room.memory.create(
+        await self.room.memory.create(
             name=self.memory_name,
             namespace=self._memory_namespace(),
             overwrite=True,
@@ -749,8 +805,15 @@ class DeleteAllMemoriesTool(_MemoriesTool):
 
 
 class DeleteEntitiesTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="delete_entities",
@@ -773,7 +836,7 @@ class DeleteEntitiesTool(_MemoriesTool):
 
     async def execute(self, context: ToolContext, *, entity_ids: list[str]):
         await self._ensure_memory_location(context)
-        result = await context.room.memory.delete_entities(
+        result = await self.room.memory.delete_entities(
             name=self.memory_name,
             namespace=self._memory_namespace(),
             entity_ids=entity_ids,
@@ -788,8 +851,15 @@ class DeleteEntitiesTool(_MemoriesTool):
 
 
 class ListEntitiesTool(_MemoriesTool):
-    def __init__(self, *, memory_name: str, namespace: Optional[list[str]] = None):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        memory_name: str,
+        namespace: Optional[list[str]] = None,
+    ):
         super().__init__(
+            room=room,
             memory_name=memory_name,
             namespace=namespace,
             name="list_entities",
@@ -846,54 +916,52 @@ class MemoriesToolkit(Toolkit):
         llm_model: Optional[str] = None,
         llm_temperature: Optional[float] = None,
         search_limit: int = 20,
+        room: RoomClient,
     ):
         super().__init__(
             name="memories",
             title="memories",
             description="Mem0-style memory tools backed by room.memory.",
+            room=room,
             tools=[
                 AddMemoryTool(
+                    room=room,
                     memory_name=memory_name,
                     namespace=namespace,
                     llm_model=llm_model,
                     llm_temperature=llm_temperature,
                 ),
                 SearchMemoriesTool(
+                    room=room,
                     memory_name=memory_name,
                     namespace=namespace,
                     recall_limit=search_limit,
                 ),
-                GetRecentMemoriesTool(memory_name=memory_name, namespace=namespace),
-                GetRecentRelationshipsTool(
-                    memory_name=memory_name, namespace=namespace
+                GetRecentMemoriesTool(
+                    room=room,
+                    memory_name=memory_name,
+                    namespace=namespace,
                 ),
-                GetEntityTool(memory_name=memory_name, namespace=namespace),
-                DeleteEntityTool(memory_name=memory_name, namespace=namespace),
-                DeleteRelationshipTool(memory_name=memory_name, namespace=namespace),
-                DeleteAllMemoriesTool(memory_name=memory_name, namespace=namespace),
+                GetRecentRelationshipsTool(
+                    room=room,
+                    memory_name=memory_name,
+                    namespace=namespace,
+                ),
+                GetEntityTool(room=room, memory_name=memory_name, namespace=namespace),
+                DeleteEntityTool(
+                    room=room,
+                    memory_name=memory_name,
+                    namespace=namespace,
+                ),
+                DeleteRelationshipTool(
+                    room=room,
+                    memory_name=memory_name,
+                    namespace=namespace,
+                ),
+                DeleteAllMemoriesTool(
+                    room=room,
+                    memory_name=memory_name,
+                    namespace=namespace,
+                ),
             ],
-        )
-
-
-class MemoriesToolkitConfig(ToolkitConfig):
-    name: Literal["memories"] = "memories"
-    memory_name: str = "graph"
-    namespace: Optional[list[str]] = None
-    llm_model: Optional[str] = None
-    llm_temperature: Optional[float] = None
-    search_limit: int = 20
-
-
-class MemoriesToolkitBuilder(ToolkitBuilder):
-    def __init__(self):
-        super().__init__(name="memories", type=MemoriesToolkitConfig)
-
-    async def make(self, *, model: str, config: MemoriesToolkitConfig) -> Toolkit:
-        del model
-        return MemoriesToolkit(
-            memory_name=config.memory_name,
-            namespace=config.namespace,
-            llm_model=config.llm_model,
-            llm_temperature=config.llm_temperature,
-            search_limit=config.search_limit,
         )

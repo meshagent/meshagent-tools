@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from meshagent.api import RoomException
+from meshagent.api import RoomClient, RoomException
 from meshagent.api.messaging import FileContent, JsonContent, TextContent
 from meshagent.tools import ToolContext
 from meshagent.tools._text_utils import grep_text, truncate_text
@@ -65,7 +65,7 @@ class _FakeSession:
 
 
 def _tool_context() -> ToolContext:
-    return ToolContext(room=object(), caller=object())
+    return ToolContext(caller=object())
 
 
 class _FakeStorageClient:
@@ -101,7 +101,7 @@ class _FakeSyncClient:
         return {"ok": True}
 
 
-class _FakeRoom:
+class _FakeRoom(RoomClient):
     def __init__(self) -> None:
         self.storage = _FakeStorageClient()
         self.sync = _FakeSyncClient()
@@ -288,12 +288,12 @@ async def test_room_mount_write_file_uses_room_storage_upload() -> None:
     room = _FakeRoom()
     toolkit = StorageToolkit(
         mounts=[
-            StorageToolRoomMount(path="/"),
+            StorageToolRoomMount(path="/", room=room),
         ],
     )
 
     result = await toolkit.execute(
-        context=ToolContext(room=room, caller=object()),
+        context=ToolContext(caller=object()),
         name="write_file",
         input=JsonContent(
             json={
@@ -319,12 +319,12 @@ async def test_room_mount_read_file_uses_room_storage_download() -> None:
     room = _FakeRoom()
     toolkit = StorageToolkit(
         mounts=[
-            StorageToolRoomMount(path="/"),
+            StorageToolRoomMount(path="/", room=room),
         ],
     )
 
     result = await toolkit.execute(
-        context=ToolContext(room=room, caller=object()),
+        context=ToolContext(caller=object()),
         name="read_file",
         input=JsonContent(
             json={
@@ -337,6 +337,13 @@ async def test_room_mount_read_file_uses_room_storage_download() -> None:
     assert isinstance(result, TextContent)
     assert result.text == "hello from room storage"
     assert room.storage.download_calls == ["rules.txt"]
+
+
+def test_room_mount_stores_bound_room() -> None:
+    room = _FakeRoom()
+    room_mount = StorageToolRoomMount(path="/room", room=room)
+
+    assert room_mount.room is room
 
 
 @pytest.mark.asyncio
@@ -734,7 +741,10 @@ async def test_web_grep_treats_yaml_as_text_when_content_type_is_octet_stream(
 
 
 def test_toolkits_expose_grep_tools() -> None:
-    storage_toolkit = StorageToolkit(read_only=True)
+    storage_toolkit = StorageToolkit(
+        read_only=True,
+        mounts=[StorageToolLocalMount(path="/", local_path="/tmp")],
+    )
     web_toolkit_instance = WebToolkit()
 
     storage_tool_names = [tool.name for tool in storage_toolkit.tools]
@@ -745,7 +755,10 @@ def test_toolkits_expose_grep_tools() -> None:
 
 
 def test_updated_function_tool_schemas_are_strict() -> None:
-    storage_toolkit = StorageToolkit(read_only=True)
+    storage_toolkit = StorageToolkit(
+        read_only=True,
+        mounts=[StorageToolLocalMount(path="/", local_path="/tmp")],
+    )
     web_toolkit_instance = WebToolkit()
 
     read_file_tool = storage_toolkit.get_tool("read_file")

@@ -119,13 +119,11 @@ class ToolContext:
     def __init__(
         self,
         *,
-        room: RoomClient,
         caller: Participant,
         on_behalf_of: Optional[Participant] = None,
         caller_context: Optional[Dict[str, Any]] = None,
         event_handler: Optional[Callable[[dict], None]] = None,
     ):
-        self._room = room
         self._caller = caller
         self._on_behalf_of = on_behalf_of
         self._caller_context = caller_context
@@ -138,10 +136,6 @@ class ToolContext:
     @property
     def on_behalf_of(self) -> Optional[Participant] | None:
         return self._on_behalf_of
-
-    @property
-    def room(self) -> RoomClient:
-        return self._room
 
     @property
     def caller_context(self) -> Optional[Dict[str, Any]]:
@@ -298,6 +292,21 @@ class FunctionTool(BaseTool):
             field_name: getattr(parsed, field_name)
             for field_name in self._execution_input_fields
         }
+
+
+class LocalRoomTool(FunctionTool):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        **kwargs: Any,
+    ) -> None:
+        self._room = room
+        super().__init__(**kwargs)
+
+    @property
+    def room(self) -> RoomClient:
+        return self._room
 
 
 class ContentTool(BaseTool):

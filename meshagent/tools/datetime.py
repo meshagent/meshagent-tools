@@ -1,9 +1,8 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
-from .config import ToolkitConfig
 from .tool import FunctionTool
-from .toolkit import ToolContext, Toolkit, ToolkitBuilder
+from .toolkit import ToolContext, Toolkit
 
 
 # ----------------------------
@@ -516,17 +515,3 @@ class DatetimeToolkit(Toolkit):
             description="Useful datetime utilities: now/ranges/parse/format/add/diff",
             tools=tools,
         )
-
-
-class DatetimeToolkitConfig(ToolkitConfig):
-    name: Literal["datetime"] = "datetime"
-
-
-class DatetimeToolkitBuilder(ToolkitBuilder):
-    def __init__(self):
-        super().__init__(name="datetime", type=DatetimeToolkitConfig)
-
-    async def make(self, *, model: str, config: DatetimeToolkitConfig) -> Toolkit:
-        del model
-        del config
-        return DatetimeToolkit()

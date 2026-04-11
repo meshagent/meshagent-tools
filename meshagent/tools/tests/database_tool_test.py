@@ -11,12 +11,8 @@ from meshagent.api.room_server_client import (
     TextDataType,
     TimestampDataType,
 )
-from meshagent.tools import ToolContext, make_toolkits
-from meshagent.tools.database import (
-    DatabaseToolkit,
-    DatabaseToolkitConfig,
-    make_database_toolkit,
-)
+from meshagent.tools import ToolContext
+from meshagent.tools.database import DatabaseToolkit, make_database_toolkit
 
 
 class _FakeDatabaseClient:
@@ -59,7 +55,8 @@ class _FakeRoom:
 
 
 def _tool_context(room: _FakeRoom) -> ToolContext:
-    return ToolContext(room=room, caller=object())
+    del room
+    return ToolContext(caller=object())
 
 
 @pytest.mark.asyncio
@@ -73,6 +70,7 @@ async def test_database_toolkit_insert_rows_uses_room_database_insert() -> None:
             }
         },
         namespace=["prod"],
+        room=room,
     )
 
     result = await toolkit.execute(
@@ -102,6 +100,7 @@ async def test_database_toolkit_accepts_encoded_dates_and_timestamps() -> None:
             }
         },
         namespace=["prod"],
+        room=room,
     )
 
     result = await toolkit.execute(
@@ -145,6 +144,7 @@ async def test_database_toolkit_advanced_search_uses_room_database_search() -> N
             }
         },
         namespace=["prod"],
+        room=room,
     )
 
     result = await toolkit.execute(
@@ -170,42 +170,12 @@ async def test_make_database_toolkit_uses_room_database_inspect() -> None:
 
     toolkit = await make_database_toolkit(
         room=room,
-        config=DatabaseToolkitConfig(
-            tables=["users"],
-            namespace=["prod"],
-            read_only=False,
-        ),
+        tables=["users"],
+        namespace=["prod"],
+        read_only=False,
     )
 
     assert isinstance(toolkit, DatabaseToolkit)
-    assert room.database.inspect_calls == [
-        {
-            "table": "users",
-            "namespace": ["prod"],
-        }
-    ]
-
-
-@pytest.mark.asyncio
-async def test_make_toolkits_supports_database_config_without_builder() -> None:
-    room = _FakeRoom()
-
-    toolkits = await make_toolkits(
-        room=room,
-        model="gpt-5",
-        providers=[],
-        tools=[
-            {
-                "name": "database",
-                "tables": ["users"],
-                "namespace": ["prod"],
-                "read_only": True,
-            }
-        ],
-    )
-
-    assert len(toolkits) == 1
-    assert isinstance(toolkits[0], DatabaseToolkit)
     assert room.database.inspect_calls == [
         {
             "table": "users",
