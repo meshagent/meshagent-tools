@@ -1,7 +1,6 @@
 import uuid
 from .tool import FunctionTool
-from .toolkit import ToolContext
-from .hosting import RemoteToolkit
+from .toolkit import ToolContext, Toolkit
 
 
 class UuidV4Tool(FunctionTool):
@@ -32,7 +31,7 @@ class UuidV4Tool(FunctionTool):
         return {"uuids": uuids, "count": len(uuids)}
 
 
-class UUIDToolkit(RemoteToolkit):
+class UUIDToolkit(Toolkit):
     def __init__(self):
         tools = [UuidV4Tool()]
         super().__init__(

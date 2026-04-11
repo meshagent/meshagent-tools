@@ -18,8 +18,8 @@ from meshagent.api.messaging import (
     unpack_content_parts,
 )
 from meshagent.api.room_server_client import RoomException, ToolContentSpec
-from meshagent.tools import ContentTool, FunctionTool, tool
-from meshagent.tools.hosting import RemoteToolkit
+from meshagent.tools import ContentTool, FunctionTool, Toolkit, tool
+from meshagent.tools.hosting import _RemoteToolkitWrapper
 
 
 @tool()
@@ -212,10 +212,25 @@ class _FailingTool(FunctionTool):
         raise RoomException("messaging is already enabled")
 
 
+def _make_hosted_toolkit(
+    *,
+    tools: list[FunctionTool | ContentTool],
+    validation_mode: str = "full",
+) -> _RemoteToolkitWrapper:
+    return _RemoteToolkitWrapper(
+        toolkit=Toolkit(
+            name="test",
+            tools=tools,
+            public=True,
+            validation_mode=validation_mode,
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_remote_toolkit_stream_parts_are_normalized_as_chunks() -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(name="test", tools=[stream_parts], public=True)
+    toolkit = _make_hosted_toolkit(tools=[stream_parts])
     toolkit._room = room  # type: ignore[assignment]
 
     await toolkit._tool_call(
@@ -265,9 +280,7 @@ async def test_remote_toolkit_stream_parts_are_normalized_as_chunks() -> None:
 @pytest.mark.asyncio
 async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(
-        name="test", tools=[_CollectRequestChunksTool()], public=True
-    )
+    toolkit = _make_hosted_toolkit(tools=[_CollectRequestChunksTool()])
     toolkit._room = room  # type: ignore[assignment]
 
     await toolkit._tool_call(
@@ -329,9 +342,7 @@ async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
 @pytest.mark.asyncio
 async def test_remote_toolkit_allows_non_stream_content_for_content_tool() -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(
-        name="test", tools=[_CollectRequestChunksTool()], public=True
-    )
+    toolkit = _make_hosted_toolkit(tools=[_CollectRequestChunksTool()])
     toolkit._room = room  # type: ignore[assignment]
 
     await toolkit._tool_call(
@@ -364,7 +375,7 @@ def _decode_chunk(message: _SentMessage) -> Content:
 @pytest.mark.asyncio
 async def test_remote_toolkit_validation_rejects_unary_output_type_mismatch() -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(name="test", tools=[_WrongOutputTypeTool()], public=True)
+    toolkit = _make_hosted_toolkit(tools=[_WrongOutputTypeTool()])
     toolkit._room = room  # type: ignore[assignment]
 
     await toolkit._tool_call(
@@ -393,10 +404,8 @@ async def test_remote_toolkit_validation_mode_none_skips_output_type_validation(
     None
 ):
     room = _FakeRoom()
-    toolkit = RemoteToolkit(
-        name="test",
+    toolkit = _make_hosted_toolkit(
         tools=[_WrongOutputTypeTool()],
-        public=True,
         validation_mode="none",
     )
     toolkit._room = room  # type: ignore[assignment]
@@ -425,9 +434,7 @@ async def test_remote_toolkit_validation_mode_none_skips_output_type_validation(
 @pytest.mark.asyncio
 async def test_remote_toolkit_validation_rejects_unary_input_schema_mismatch() -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(
-        name="test", tools=[_SchemaValidatedTextEchoTool()], public=True
-    )
+    toolkit = _make_hosted_toolkit(tools=[_SchemaValidatedTextEchoTool()])
     toolkit._room = room  # type: ignore[assignment]
 
     await toolkit._tool_call(
@@ -454,11 +461,7 @@ async def test_remote_toolkit_validation_rejects_unary_input_schema_mismatch() -
 @pytest.mark.asyncio
 async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(
-        name="test",
-        tools=[_CollectValidatedTextStreamTool()],
-        public=True,
-    )
+    toolkit = _make_hosted_toolkit(tools=[_CollectValidatedTextStreamTool()])
     toolkit._room = room  # type: ignore[assignment]
 
     await toolkit._tool_call(
@@ -521,9 +524,7 @@ async def test_remote_toolkit_validation_stream_output_sends_invalid_data_close_
     None
 ):
     room = _FakeRoom()
-    toolkit = RemoteToolkit(
-        name="test", tools=[_InvalidStreamOutputTool()], public=True
-    )
+    toolkit = _make_hosted_toolkit(tools=[_InvalidStreamOutputTool()])
     toolkit._room = room  # type: ignore[assignment]
 
     await toolkit._tool_call(
@@ -563,13 +564,11 @@ async def test_remote_toolkit_validation_stream_output_sends_invalid_data_close_
 @pytest.mark.asyncio
 async def test_remote_toolkit_registration_preserves_strict_tool_metadata() -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(
-        name="test",
+    toolkit = _make_hosted_toolkit(
         tools=[
             _StrictToggleTool(name="strict_tool", strict=True),
             _StrictToggleTool(name="loose_tool", strict=False),
         ],
-        public=True,
     )
     toolkit._room = room  # type: ignore[assignment]
 
@@ -587,7 +586,7 @@ async def test_remote_toolkit_logs_tool_failures_as_warnings_with_exception_mess
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     room = _FakeRoom()
-    toolkit = RemoteToolkit(name="test", tools=[_FailingTool()], public=True)
+    toolkit = _make_hosted_toolkit(tools=[_FailingTool()])
     toolkit._room = room  # type: ignore[assignment]
 
     with caplog.at_level(logging.WARNING, logger="hosting"):

@@ -1,4 +1,5 @@
-from .hosting import RemoteToolkit, ToolContext, FunctionTool
+from .tool import FunctionTool, ToolContext
+from .toolkit import Toolkit
 
 
 class ListTools(FunctionTool):
@@ -30,7 +31,7 @@ class ListTools(FunctionTool):
         return {"toolkits": [*(t.to_json() for t in toolkits)]}
 
 
-class DiscoveryToolkit(RemoteToolkit):
+class DiscoveryToolkit(Toolkit):
     def __init__(self):
         super().__init__(
             name="discovery",

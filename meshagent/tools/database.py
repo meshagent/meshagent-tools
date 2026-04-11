@@ -1,7 +1,6 @@
 from .config import ToolkitConfig
 from .tool import FunctionTool
-from .toolkit import ToolContext, ToolkitBuilder
-from .hosting import RemoteToolkit, Toolkit
+from .toolkit import ToolContext, Toolkit
 from typing import Any, Literal, Optional
 from meshagent.api.room_server_client import (
     BinaryDataType,
@@ -504,7 +503,6 @@ class SpawnTaskForEachRow(FunctionTool):
         name: Optional[str] = None,
         title: Optional[str] = None,
         description: Optional[str] = None,
-        supports_context: bool = True,
     ):
         self.table = table
         self.namespace = namespace
@@ -547,7 +545,6 @@ class SpawnTaskForEachRow(FunctionTool):
             description=description
             or f"for each result in {table} where rows match the specified values (specify null for a column to exclude it from the search), queue a worker task",
             input_schema=input_schema,
-            supports_context=supports_context,
         )
 
     def make_message(self, *, context: ToolContext, row: dict):
@@ -555,9 +552,6 @@ class SpawnTaskForEachRow(FunctionTool):
             "prompt": self.prompt.format(**row),
             "row": row,
         }
-
-        if self.supports_context:
-            msg["caller_context"] = context.caller_context
 
         return msg
 
@@ -738,7 +732,7 @@ class AdvancedDeleteRowsTool(FunctionTool):
         return {"ok": True}
 
 
-class DatabaseToolkit(RemoteToolkit):
+class DatabaseToolkit(Toolkit):
     def __init__(
         self,
         *,
@@ -788,16 +782,19 @@ class DatabaseToolkitConfig(ToolkitConfig):
     read_only: bool
 
 
-class DatabaseToolkitBuilder(ToolkitBuilder):
-    def __init__(self):
-        super().__init__(name="database", type=DatabaseToolkitConfig)
-
-    async def make(
-        self, *, room: RoomClient, model: str, config: DatabaseToolkitConfig
-    ) -> Toolkit:
-        tables = {}
-        for t in config.tables:
-            tables[t] = await room.database.inspect(table=t, namespace=config.namespace)
-        return DatabaseToolkit(
-            tables=tables, read_only=config.read_only, namespace=config.namespace
+async def make_database_toolkit(
+    *,
+    room: RoomClient,
+    config: DatabaseToolkitConfig,
+) -> DatabaseToolkit:
+    tables = {}
+    for table in config.tables:
+        tables[table] = await room.database.inspect(
+            table=table,
+            namespace=config.namespace,
         )
+    return DatabaseToolkit(
+        tables=tables,
+        read_only=config.read_only,
+        namespace=config.namespace,
+    )

@@ -3,9 +3,7 @@ from typing import Any, Literal, Optional
 from zoneinfo import ZoneInfo
 from .config import ToolkitConfig
 from .tool import FunctionTool
-from .toolkit import ToolContext, ToolkitBuilder
-from .hosting import RemoteToolkit, Toolkit
-from meshagent.api.room_server_client import RoomClient
+from .toolkit import ToolContext, Toolkit, ToolkitBuilder
 
 
 # ----------------------------
@@ -499,7 +497,7 @@ class UtcZTool(FunctionTool):
 # ----------------------------
 
 
-class DatetimeToolkit(RemoteToolkit):
+class DatetimeToolkit(Toolkit):
     def __init__(self):
         tools = [
             NowTool(),
@@ -528,8 +526,7 @@ class DatetimeToolkitBuilder(ToolkitBuilder):
     def __init__(self):
         super().__init__(name="datetime", type=DatetimeToolkitConfig)
 
-    async def make(
-        self, *, room: RoomClient, model: str, config: DatetimeToolkitConfig
-    ) -> Toolkit:
-        # no room dependency required; purely local computations
+    async def make(self, *, model: str, config: DatetimeToolkitConfig) -> Toolkit:
+        del model
+        del config
         return DatetimeToolkit()

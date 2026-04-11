@@ -680,11 +680,9 @@ class ContainerShellToolkitBuilder(ToolkitBuilder):
     async def make(
         self,
         *,
-        room: RoomClient,
         model: str,
         config: ContainerShellToolConfig,
     ) -> Toolkit:
-        del room
         del model
         del config
         return Toolkit(
@@ -952,11 +950,9 @@ class ContainerToolkitBuilder(ToolkitBuilder):
     async def make(
         self,
         *,
-        room: RoomClient,
         model: str,
         config: ContainerToolkitConfig,
     ) -> Toolkit:
-        del room
         del model
         del config
         return ContainerToolkit(

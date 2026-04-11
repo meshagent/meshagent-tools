@@ -10,7 +10,6 @@ from meshagent.api.messaging import FileContent, Content, TextContent
 from meshagent.tools.config import ToolkitConfig
 from meshagent.tools.tool import FunctionTool, ToolContext
 from meshagent.tools.toolkit import Toolkit, ToolkitBuilder
-from meshagent.api.room_server_client import RoomClient
 from ._text_utils import (
     DEFAULT_TOOL_MAX_LENGTH,
     grep_text,
@@ -360,7 +359,6 @@ class WebFetchToolkitBuilder(ToolkitBuilder):
     def __init__(self):
         super().__init__(name="web_fetch", type=WebFetchConfig)
 
-    async def make(
-        self, *, room: RoomClient, model: str, config: WebFetchConfig
-    ) -> Toolkit:
+    async def make(self, *, model: str, config: WebFetchConfig) -> Toolkit:
+        del model
         return WebToolkit(user_agent=config.user_agent, max_length=config.max_length)

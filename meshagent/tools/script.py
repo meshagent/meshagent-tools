@@ -87,7 +87,8 @@ class ScriptToolkitBuilder(ToolkitBuilder):
         self.commands = commands
         self.input_schema = input_schema
 
-    async def make(self, *, room: RoomClient, model: str, config: ScriptToolConfig):
+    async def make(self, *, model: str, config: ScriptToolConfig):
+        del model
         return Toolkit(
             name=self.name,
             tools=[

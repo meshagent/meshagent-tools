@@ -101,24 +101,15 @@ class ToolkitConfig(ToolkitConfig):
     tool: str
 
 
-def make_basic_toolkit_config_cls(toolkit: "Toolkit"):
-    class CustomToolkitConfig:
-        name: Literal[toolkit.name] = toolkit.name
-
-    return CustomToolkitConfig
-
-
 class ToolkitBuilder:
     def __init__(self, *, name: str, type: type):
         self.name = name
         self.type = type
 
-    async def make(
-        self, *, room: RoomClient, model: str, config: ToolkitConfig
-    ) -> "Toolkit": ...
+    async def make(self, *, model: str, config: ToolkitConfig) -> "Toolkit": ...
 
 
-class Toolkit(ToolkitBuilder):
+class Toolkit:
     def __init__(
         self,
         *,
@@ -129,6 +120,7 @@ class Toolkit(ToolkitBuilder):
         description: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
         validation_mode: ValidationMode = "full",
+        public: bool = True,
     ):
         if validation_mode not in ("full", "content_types", "none"):
             raise ValueError(
@@ -146,6 +138,7 @@ class Toolkit(ToolkitBuilder):
         self.rules = rules
         self.thumbnail_url = thumbnail_url
         self.validation_mode: ValidationMode = validation_mode
+        self.public = public
 
     @staticmethod
     def _should_validate_content_types(*, validation_mode: ValidationMode) -> bool:
@@ -345,7 +338,7 @@ class Toolkit(ToolkitBuilder):
         context: ToolContext,
         name: str,
         input: Content | AsyncIterable[Content],
-        validate_function_schema: bool = True,
+        validation_mode: ValidationMode = "full",
     ):
         with tracer.start_as_current_span(
             build_tool_span_name(
@@ -355,9 +348,7 @@ class Toolkit(ToolkitBuilder):
             )
         ) as span:
             span.set_attributes({"toolkit": self.name, "tool": name})
-            context_validation_mode = context.validation_mode
-            if context_validation_mode is not None:
-                validate_function_schema = context_validation_mode == "full"
+            validate_function_schema = validation_mode == "full"
 
             tool = self.get_tool(name)
             if not isinstance(tool, (FunctionTool, ContentTool)):
@@ -452,11 +443,7 @@ class Toolkit(ToolkitBuilder):
         validation_mode: ValidationMode | None = None,
     ) -> Content | AsyncIterable[Content]:
         validation_mode = (
-            context.validation_mode
-            if validation_mode is None and context.validation_mode is not None
-            else self.validation_mode
-            if validation_mode is None
-            else validation_mode
+            self.validation_mode if validation_mode is None else validation_mode
         )
 
         tool = self.get_tool(name)
@@ -534,7 +521,7 @@ class Toolkit(ToolkitBuilder):
             context=context,
             name=name,
             input=execution_input,
-            validate_function_schema=validation_mode == "full",
+            validation_mode=validation_mode,
         )
 
         if isinstance(execution_result, AsyncIterable):
@@ -573,9 +560,6 @@ class Toolkit(ToolkitBuilder):
         )
         return normalized_output
 
-    async def make(self, *, room: RoomClient, model: str, config: ToolkitConfig):
-        return self
-
 
 async def make_toolkits(
     *,
@@ -584,26 +568,37 @@ async def make_toolkits(
     providers: list[ToolkitBuilder],
     tools: list[ToolkitConfig],
 ) -> list[Toolkit]:
+    from meshagent.tools.database import DatabaseToolkitConfig, make_database_toolkit
+
     result = []
     if tools is not None:
         for config in tools:
             found = False
             if isinstance(config, dict):
+                if config["name"] == "database":
+                    typed_config = DatabaseToolkitConfig.model_validate(config)
+                    result.append(
+                        await make_database_toolkit(room=room, config=typed_config)
+                    )
+                    found = True
+                    continue
+
                 for t in providers:
                     if t.name == config["name"]:
                         config = t.type.model_validate(config)
-                        result.append(
-                            await t.make(room=room, model=model, config=config)
-                        )
+                        result.append(await t.make(model=model, config=config))
                         found = True
                         break
 
             else:
+                if isinstance(config, DatabaseToolkitConfig):
+                    result.append(await make_database_toolkit(room=room, config=config))
+                    found = True
+                    continue
+
                 for t in providers:
                     if t.type is type(config):
-                        result.append(
-                            await t.make(room=room, model=model, config=config)
-                        )
+                        result.append(await t.make(model=model, config=config))
                         found = True
                         break
 

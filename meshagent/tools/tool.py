@@ -124,14 +124,12 @@ class ToolContext:
         on_behalf_of: Optional[Participant] = None,
         caller_context: Optional[Dict[str, Any]] = None,
         event_handler: Optional[Callable[[dict], None]] = None,
-        validation_mode: Optional[ValidationMode] = None,
     ):
         self._room = room
         self._caller = caller
         self._on_behalf_of = on_behalf_of
         self._caller_context = caller_context
         self._event_handler = event_handler
-        self._validation_mode = validation_mode
 
     @property
     def caller(self) -> Participant:
@@ -148,10 +146,6 @@ class ToolContext:
     @property
     def caller_context(self) -> Optional[Dict[str, Any]]:
         return self._caller_context
-
-    @property
-    def validation_mode(self) -> Optional[ValidationMode]:
-        return self._validation_mode
 
     def emit(self, event: dict):
         if self._event_handler is not None:
@@ -173,11 +167,7 @@ class BaseTool(ABC):
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
         pricing: Optional[str] = None,
-        supports_context: Optional[bool] = None,
     ):
-        if supports_context is None:
-            supports_context = False
-
         self.name = name
 
         if title is None:
@@ -239,8 +229,6 @@ class BaseTool(ABC):
         self._output_schema = resolved_output_schema
         self.defs = defs
 
-        self.supports_context = supports_context
-
     @property
     def input_schema(self) -> dict | None:
         return self._input_schema
@@ -265,7 +253,6 @@ class FunctionTool(BaseTool):
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
         pricing: Optional[str] = None,
-        supports_context: Optional[bool] = None,
     ):
         if not isinstance(input_schema, dict):
             raise TypeError("input_schema must be a dict")
@@ -287,7 +274,6 @@ class FunctionTool(BaseTool):
             rules=rules,
             thumbnail_url=thumbnail_url,
             pricing=pricing,
-            supports_context=supports_context,
         )
         (
             self._execution_input_model,
@@ -329,7 +315,6 @@ class ContentTool(BaseTool):
         rules: Optional[list[str]] = None,
         thumbnail_url: Optional[str] = None,
         pricing: Optional[str] = None,
-        supports_context: Optional[bool] = None,
     ):
         if input_schema is not None and not isinstance(input_schema, dict):
             raise TypeError("input_schema must be a dict when provided")
@@ -346,7 +331,6 @@ class ContentTool(BaseTool):
             rules=rules,
             thumbnail_url=thumbnail_url,
             pricing=pricing,
-            supports_context=supports_context,
         )
 
     async def execute(
@@ -375,7 +359,7 @@ def tool(
             )
         )
 
-        supports_context = False
+        accepts_context = False
         fields: dict[str, tuple[Any, Any]] = {}
 
         parameters = list(signature.parameters.items())
@@ -390,7 +374,7 @@ def tool(
                 continue
             annotation = hints.get(param_name, Any)
             if annotation is ToolContext:
-                supports_context = True
+                accepts_context = True
                 continue
 
             default = param.default if param.default is not inspect._empty else ...
@@ -417,7 +401,6 @@ def tool(
                     input_schema=strict_schema,
                     output_spec=inferred_output_spec,
                     output_schema=inferred_output_schema,
-                    supports_context=supports_context,
                 )
                 self.strict = True
                 self._bound_instance = bound_instance
@@ -445,7 +428,7 @@ def tool(
 
                 bound_instance = self._bound_instance
 
-                if supports_context:
+                if accepts_context:
                     if bound_instance is not None:
                         result = fn(bound_instance, context, **parsed_args)
                     else:

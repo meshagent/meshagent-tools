@@ -23,7 +23,7 @@ from meshagent.api.participant import Participant
 from meshagent.api.protocol import Protocol
 from meshagent.api.room_server_client import RoomClient, RoomException
 from meshagent.api.chan import ChanClosed
-from meshagent.tools.tool import BaseTool, ContentTool, FunctionTool, ToolContext
+from meshagent.tools.tool import ContentTool, FunctionTool, ToolContext
 from meshagent.tools.toolkit import InvalidToolDataException, Toolkit, ValidationMode
 
 from aiohttp import web
@@ -198,7 +198,7 @@ class RemoteTool(FunctionTool):
         pass
 
 
-class RemoteToolkit(Toolkit):
+class _RemoteToolkitWrapper(Toolkit):
     """Remote toolkit host protocol contract.
 
     Wire protocol:
@@ -251,31 +251,21 @@ class RemoteToolkit(Toolkit):
     def __init__(
         self,
         *,
-        name: str,
-        tools: list[BaseTool] = None,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        thumbnail_url: Optional[str] = None,
-        public: bool = True,
-        validation_mode: ValidationMode = "full",
+        toolkit: Toolkit,
+        public: Optional[bool] = None,
     ):
         super().__init__(
-            name=name,
-            description=description,
-            title=title,
-            tools=tools,
-            thumbnail_url=thumbnail_url,
-            validation_mode=validation_mode,
+            name=toolkit.name,
+            description=toolkit.description,
+            title=toolkit.title,
+            tools=toolkit.tools,
+            thumbnail_url=toolkit.thumbnail_url,
+            validation_mode=toolkit.validation_mode,
+            public=toolkit.public if public is None else public,
         )
-
-        if tools is None:
-            tools = list[BaseTool]()
-
-        self.tools = tools
         self._registration_id = None
 
         self._room = None
-        self.public = public
         self._request_streams = dict[str, asyncio.Queue[Optional[Content]]]()
         self._pending_request_chunks = dict[str, list[Content]]()
 
@@ -554,7 +544,6 @@ class RemoteToolkit(Toolkit):
                 "thumbnail_url": tool.thumbnail_url,
                 "defs": tool.defs,
                 "pricing": tool.pricing,
-                "supports_context": tool.supports_context,
                 "strict": tool.strict if isinstance(tool, FunctionTool) else None,
             }
 
@@ -585,12 +574,7 @@ async def connect_remote_toolkit(*, room_name: str, toolkit: Toolkit):
             participant_name=toolkit.name, room_name=room_name, role="tool"
         )
     ) as room:
-        remote = RemoteToolkit(
-            name=toolkit.name,
-            description=toolkit.description,
-            title=toolkit.title,
-            tools=[*toolkit.tools],
-        )
+        remote = _RemoteToolkitWrapper(toolkit=toolkit)
 
         await remote.start(room=room)
 
@@ -613,13 +597,13 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
     def __init__(
         self,
         *,
-        cls: Optional[T] = None,
+        cls: type[T] | None = None,
         path: Optional[str] = None,
         app: Optional[web.Application] = None,
         host=None,
         port=None,
         webhook_secret=None,
-        create_toolkit: Optional[Callable[[dict], RemoteToolkit]] = None,
+        create_toolkit: Optional[Callable[[dict], T]] = None,
         validate_webhook_secret: Optional[bool] = None,
     ):
         super().__init__(
@@ -632,10 +616,11 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
         )
 
         if create_toolkit is None:
+            if cls is None:
+                raise ValueError("cls or create_toolkit is required")
 
-            def default_create_toolkit(arguments: dict) -> RemoteToolkit:
-                t = cls(**arguments)
-                return t
+            def default_create_toolkit(arguments: dict) -> T:
+                return cls(**arguments)
 
             create_toolkit = default_create_toolkit
 
@@ -651,9 +636,7 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
     ):
         t = self._create_toolkit(arguments=arguments)
 
-        toolkit = RemoteToolkit(
-            name=t.name, tools=t.tools, title=t.title, description=t.description
-        )
+        toolkit = _RemoteToolkitWrapper(toolkit=t)
 
         async def run():
             async with RoomClient(
@@ -693,3 +676,13 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
             token=event.token,
             arguments=event.arguments,
         )
+
+
+async def _start_hosted_toolkit(
+    *,
+    room: RoomClient,
+    toolkit: Toolkit,
+) -> _RemoteToolkitWrapper:
+    hosted_toolkit = _RemoteToolkitWrapper(toolkit=toolkit)
+    await hosted_toolkit.start(room=room)
+    return hosted_toolkit

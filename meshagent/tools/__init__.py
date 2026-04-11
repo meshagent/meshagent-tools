@@ -21,7 +21,6 @@ from .config import ToolkitConfig
 from .toolkit import Toolkit, ToolkitBuilder, make_toolkits
 
 from .hosting import (
-    RemoteToolkit,
     connect_remote_toolkit,
     RemoteToolkitServer,
     RemoteTool,
@@ -52,6 +51,11 @@ from .memories import (
     MemoriesToolkitConfig,
     MemoriesToolkitBuilder,
 )
+from .database import (
+    DatabaseToolkit,
+    DatabaseToolkitConfig,
+    make_database_toolkit,
+)
 
 from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
 from meshagent.api.websocket_protocol import WebSocketClientProtocol
@@ -73,7 +77,6 @@ __all__ = [
     Toolkit,
     tool,
     BaseTool,
-    RemoteToolkit,
     connect_remote_toolkit,
     RemoteToolkitServer,
     RemoteTool,
@@ -102,5 +105,8 @@ __all__ = [
     MemoriesToolkit,
     MemoriesToolkitConfig,
     MemoriesToolkitBuilder,
+    DatabaseToolkit,
+    DatabaseToolkitConfig,
+    make_database_toolkit,
     __version__,
 ]

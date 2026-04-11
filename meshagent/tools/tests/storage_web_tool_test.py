@@ -237,7 +237,7 @@ async def test_read_file_treats_json_as_text_when_mime_is_unknown(
 
 
 @pytest.mark.asyncio
-async def test_grep_file_supports_context_and_offset(tmp_path) -> None:
+async def test_grep_file_uses_caller_context_and_offset(tmp_path) -> None:
     content = "\n".join(
         [
             "zero",
@@ -597,7 +597,7 @@ async def test_web_fetch_treats_json_as_text_when_content_type_is_octet_stream(
 
 
 @pytest.mark.asyncio
-async def test_web_grep_supports_context_and_offset(monkeypatch) -> None:
+async def test_web_grep_uses_caller_context_and_offset(monkeypatch) -> None:
     body = "\n".join(
         [
             "zero",

@@ -5,14 +5,12 @@ from meshagent.api.room_server_client import (
     MemoryRelationshipSelector,
     MemoryRecallItem,
     RoomException,
-    RoomClient,
 )
 
 from .config import ToolkitConfig
-from .hosting import RemoteToolkit, Toolkit
 from .strict_schema import ensure_strict_json_schema
 from .tool import FunctionTool
-from .toolkit import ToolContext, ToolkitBuilder
+from .toolkit import ToolContext, Toolkit, ToolkitBuilder
 
 
 def _escape_query_value(value: str) -> str:
@@ -839,7 +837,7 @@ class ListEntitiesTool(_MemoriesTool):
         return {"entities": [*(_entity_from_entity_row(row) for row in rows)]}
 
 
-class MemoriesToolkit(RemoteToolkit):
+class MemoriesToolkit(Toolkit):
     def __init__(
         self,
         *,
@@ -890,10 +888,7 @@ class MemoriesToolkitBuilder(ToolkitBuilder):
     def __init__(self):
         super().__init__(name="memories", type=MemoriesToolkitConfig)
 
-    async def make(
-        self, *, room: RoomClient, model: str, config: MemoriesToolkitConfig
-    ) -> Toolkit:
-        del room
+    async def make(self, *, model: str, config: MemoriesToolkitConfig) -> Toolkit:
         del model
         return MemoriesToolkit(
             memory_name=config.memory_name,

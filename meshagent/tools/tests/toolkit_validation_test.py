@@ -6,7 +6,7 @@ import meshagent.tools.toolkit as toolkit_module
 from meshagent.api import ToolContentSpec
 from meshagent.api.messaging import JsonContent
 from meshagent.api.specs.service import ContainerMountSpec
-from meshagent.tools import FunctionTool, ToolContext, Toolkit, tool
+from meshagent.tools import FunctionTool, ToolContext, Toolkit, ToolkitBuilder, tool
 
 
 _ADD_INPUT_SCHEMA = {
@@ -109,6 +109,10 @@ def count_mounts(*, mounts: list[ContainerMountSpec]) -> dict[str, int]:
     return {"count": len(mounts)}
 
 
+def test_toolkit_is_not_a_toolkit_builder() -> None:
+    assert not issubclass(Toolkit, ToolkitBuilder)
+
+
 @pytest.mark.asyncio
 async def test_toolkit_uses_pydantic_argument_parsing_when_input_validation_is_relaxed():
     toolkit = Toolkit(
@@ -204,6 +208,22 @@ async def test_toolkit_execute_uses_descriptive_span_name(
     assert [span.name for span in recorded_tracer.spans] == ["execute.math-toolkit.add"]
     assert recorded_tracer.spans[0].attributes["toolkit"] == "math-toolkit"
     assert recorded_tracer.spans[0].attributes["tool"] == "add"
+
+
+@pytest.mark.asyncio
+async def test_toolkit_execute_respects_explicit_validation_mode() -> None:
+    toolkit = Toolkit(name="test", tools=[_AddTool()])
+    context = ToolContext(room=object(), caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="add",
+        input=JsonContent(json={"a": "1", "b": 2, "ignored": True}),
+        validation_mode="content_types",
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"c": 3}
 
 
 @pytest.mark.asyncio

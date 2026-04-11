@@ -10,13 +10,12 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from meshagent.api.messaging import JsonContent, LinkContent, FileContent, TextContent
-from meshagent.api import RoomClient, RoomException
+from meshagent.api import RoomException
 from meshagent.api.room_server_client import StorageEntry
 
 from .config import ToolkitConfig
 from .tool import FunctionTool
-from .toolkit import ToolContext, ToolkitBuilder
-from .hosting import RemoteToolkit, Toolkit
+from .toolkit import ToolContext, Toolkit, ToolkitBuilder
 from .blob import get_bytes_from_url
 from ._text_utils import (
     DEFAULT_TOOL_MAX_LENGTH,
@@ -745,7 +744,7 @@ class SaveFileFromUrlTool(_StorageTool):
         )
 
 
-class StorageToolkit(RemoteToolkit):
+class StorageToolkit(Toolkit):
     def __init__(
         self,
         read_only: bool = False,
@@ -865,9 +864,8 @@ class StorageToolkitBuilder(ToolkitBuilder):
         self.mounts = mounts
         self.max_length = max_length
 
-    async def make(
-        self, *, room: RoomClient, model: str, config: StorageToolkitConfig
-    ) -> Toolkit:
+    async def make(self, *, model: str, config: StorageToolkitConfig) -> Toolkit:
+        del model
         return StorageToolkit(
             mounts=self.mounts,
             max_length=config.max_length
