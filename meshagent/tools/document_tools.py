@@ -390,7 +390,5 @@ class DocumentTypeAuthoringToolkit(Toolkit):
             title=title,
             description=description,
             room=room,
-            tools=[
-                *build_tools(room=room, schema=schema, document_type=document_type)
-            ],
+            tools=[*build_tools(room=room, schema=schema, document_type=document_type)],
         )
