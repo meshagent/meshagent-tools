@@ -107,6 +107,8 @@ class Toolkit:
         thumbnail_url: Optional[str] = None,
         validation_mode: ValidationMode = "full",
         public: bool = True,
+        client_options: dict | None = None,
+        hidden: bool = False,
         room: RoomClient | None = None,
     ):
         if validation_mode not in ("full", "content_types", "none"):
@@ -126,6 +128,8 @@ class Toolkit:
         self.thumbnail_url = thumbnail_url
         self.validation_mode: ValidationMode = validation_mode
         self.public = public
+        self.client_options = client_options
+        self.hidden = hidden
         self._room = room
 
     @property
@@ -135,6 +139,27 @@ class Toolkit:
                 f"Toolkit '{self.name}' requires a bound RoomClient before use"
             )
         return self._room
+
+    def get_tools(self, *, client_options: Optional[dict] = None) -> list[BaseTool]:
+        del client_options
+        return [*self.tools]
+
+    def with_client_options(
+        self, *, client_options: Optional[dict] = None
+    ) -> "Toolkit":
+        return Toolkit(
+            name=self.name,
+            tools=self.get_tools(client_options=client_options),
+            rules=[*self.rules],
+            title=self.title,
+            description=self.description,
+            thumbnail_url=self.thumbnail_url,
+            validation_mode=self.validation_mode,
+            public=self.public,
+            client_options=self.client_options,
+            hidden=self.hidden,
+            room=self._room,
+        )
 
     @staticmethod
     def _should_validate_content_types(*, validation_mode: ValidationMode) -> bool:
