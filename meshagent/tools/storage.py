@@ -39,7 +39,6 @@ class StorageToolMount(BaseModel):
     async def read_file(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> FileContent:
@@ -48,7 +47,6 @@ class StorageToolMount(BaseModel):
     async def write_text(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
         text: str,
@@ -59,7 +57,6 @@ class StorageToolMount(BaseModel):
     async def write_bytes(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
         data: bytes,
@@ -70,7 +67,6 @@ class StorageToolMount(BaseModel):
     async def list_entries(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
     ) -> list[StorageEntry]:
         raise NotImplementedError
@@ -78,7 +74,6 @@ class StorageToolMount(BaseModel):
     async def get_download_url(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> LinkContent:
@@ -87,7 +82,6 @@ class StorageToolMount(BaseModel):
     async def delete_path(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> None:
@@ -100,7 +94,6 @@ class StorageToolLocalMount(StorageToolMount):
     async def read_file(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> FileContent:
@@ -115,7 +108,6 @@ class StorageToolLocalMount(StorageToolMount):
     async def write_text(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
         text: str,
@@ -128,7 +120,6 @@ class StorageToolLocalMount(StorageToolMount):
     async def write_bytes(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
         data: bytes,
@@ -141,7 +132,6 @@ class StorageToolLocalMount(StorageToolMount):
     async def list_entries(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
     ) -> list[StorageEntry]:
         local_path = _require_local_path(resolved)
@@ -150,7 +140,6 @@ class StorageToolLocalMount(StorageToolMount):
     async def get_download_url(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> LinkContent:
@@ -166,11 +155,9 @@ class StorageToolLocalMount(StorageToolMount):
     async def delete_path(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> None:
-        del context
         self._ensure_writable(path)
         local_path = _require_local_path(resolved)
         await _delete_local_path(local_path)
@@ -183,7 +170,6 @@ class StorageToolRoomMount(StorageToolMount):
     async def read_file(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> FileContent:
@@ -211,7 +197,6 @@ class StorageToolRoomMount(StorageToolMount):
     async def write_text(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
         text: str,
@@ -228,7 +213,6 @@ class StorageToolRoomMount(StorageToolMount):
     async def write_bytes(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
         data: bytes,
@@ -251,7 +235,6 @@ class StorageToolRoomMount(StorageToolMount):
     async def list_entries(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
     ) -> list[StorageEntry]:
         room_path = _require_room_path(resolved)
@@ -260,7 +243,6 @@ class StorageToolRoomMount(StorageToolMount):
     async def get_download_url(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> LinkContent:
@@ -272,11 +254,9 @@ class StorageToolRoomMount(StorageToolMount):
     async def delete_path(
         self,
         *,
-        context: ToolContext,
         resolved: "_ResolvedStoragePath",
         path: str,
     ) -> None:
-        del context
         self._ensure_writable(path)
         room_path = _require_room_path(resolved)
         await self.room.storage.delete(path=room_path)
@@ -577,7 +557,6 @@ class ReadFileTool(_StorageTool):
         offset = normalize_offset(value=kwargs.get("offset"))
         resolved = self._resolve_path(path)
         file_content = await resolved.mount.read_file(
-            context=context,
             resolved=resolved,
             path=path,
         )
@@ -649,7 +628,6 @@ class GrepFileTool(_StorageTool):
 
         resolved = self._resolve_path(path)
         file_content = await resolved.mount.read_file(
-            context=context,
             resolved=resolved,
             path=path,
         )
@@ -708,7 +686,6 @@ class WriteFileTool(_StorageTool):
         overwrite = kwargs["overwrite"]
         resolved = self._resolve_path(path)
         await resolved.mount.write_text(
-            context=context,
             resolved=resolved,
             path=path,
             text=text,
@@ -741,7 +718,6 @@ class GetFileDownloadUrl(_StorageTool):
         path = kwargs["path"]
         resolved = self._resolve_path(path)
         return await resolved.mount.get_download_url(
-            context=context,
             resolved=resolved,
             path=path,
         )
@@ -766,7 +742,6 @@ class ListFilesTool(_StorageTool):
         path = kwargs["path"]
         resolved = self._resolve_path(path)
         files = await resolved.mount.list_entries(
-            context=context,
             resolved=resolved,
         )
         return JsonContent(
@@ -809,7 +784,6 @@ class SaveFileFromUrlTool(_StorageTool):
         resolved = self._resolve_path(path)
         blob = await get_bytes_from_url(url=url)
         await resolved.mount.write_bytes(
-            context=context,
             resolved=resolved,
             path=path,
             data=blob.data,
@@ -862,27 +836,22 @@ class StorageToolkit(Toolkit):
     def _resolve_path(self, path: str) -> _ResolvedStoragePath:
         return _resolve_storage_path(self._mounts, path)
 
-    async def read_file(self, *, context: ToolContext, path: str) -> FileContent:
+    async def read_file(self, *, path: str) -> FileContent:
         resolved = self._resolve_path(path)
         return await resolved.mount.read_file(
-            context=context,
             resolved=resolved,
             path=path,
         )
 
-    async def list_entries(
-        self, *, context: ToolContext, path: str
-    ) -> list[StorageEntry]:
+    async def list_entries(self, *, path: str) -> list[StorageEntry]:
         resolved = self._resolve_path(path)
         return await resolved.mount.list_entries(
-            context=context,
             resolved=resolved,
         )
 
-    async def get_download_url(self, *, context: ToolContext, path: str) -> LinkContent:
+    async def get_download_url(self, *, path: str) -> LinkContent:
         resolved = self._resolve_path(path)
         return await resolved.mount.get_download_url(
-            context=context,
             resolved=resolved,
             path=path,
         )
@@ -890,7 +859,6 @@ class StorageToolkit(Toolkit):
     async def write_text(
         self,
         *,
-        context: ToolContext,
         path: str,
         text: str,
         overwrite: bool,
@@ -898,7 +866,6 @@ class StorageToolkit(Toolkit):
         self._ensure_writable(path)
         resolved = self._resolve_path(path)
         await resolved.mount.write_text(
-            context=context,
             resolved=resolved,
             path=path,
             text=text,
@@ -908,7 +875,6 @@ class StorageToolkit(Toolkit):
     async def write_bytes(
         self,
         *,
-        context: ToolContext,
         path: str,
         data: bytes,
         overwrite: bool,
@@ -916,18 +882,16 @@ class StorageToolkit(Toolkit):
         self._ensure_writable(path)
         resolved = self._resolve_path(path)
         await resolved.mount.write_bytes(
-            context=context,
             resolved=resolved,
             path=path,
             data=data,
             overwrite=overwrite,
         )
 
-    async def delete(self, *, context: ToolContext, path: str) -> None:
+    async def delete(self, *, path: str) -> None:
         self._ensure_writable(path)
         resolved = self._resolve_path(path)
         await resolved.mount.delete_path(
-            context=context,
             resolved=resolved,
             path=path,
         )
