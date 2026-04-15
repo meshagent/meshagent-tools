@@ -264,6 +264,9 @@ class _RemoteToolkitWrapper(Toolkit):
         self._room = None
         self._request_streams = dict[str, asyncio.Queue[Optional[Content]]]()
         self._pending_request_chunks = dict[str, list[Content]]()
+        self._register_task: asyncio.Task[None] | None = None
+        self._room_disconnected_handler: Callable[..., None] | None = None
+        self._room_reconnected_handler: Callable[[], None] | None = None
 
     @property
     def room(self):
@@ -288,18 +291,46 @@ class _RemoteToolkitWrapper(Toolkit):
                 )
 
         self._room = room
+        self._room_disconnected_handler = self._on_room_disconnected
+        self._room_reconnected_handler = self._on_room_reconnected
+        room.on("disconnected", self._room_disconnected_handler)
+        room.on("reconnected", self._room_reconnected_handler)
 
-        self._room.protocol.register_handler(
-            f"room.tool_call.{self.name}", self._tool_call
-        )
-        self._room.protocol.register_handler(
-            f"room.tool_call_request_chunk.{self.name}",
-            self._tool_call_request_chunk,
+        room.protocol.register_handler(f"room.tool_call.{self.name}", self._tool_call)
+        room.protocol.register_handler(
+            f"room.tool_call_request_chunk.{self.name}", self._tool_call_request_chunk
         )
 
-        await self._register(public=self.public)
+        try:
+            await self._register(public=self.public)
+        except Exception:
+            room.protocol.unregister_handler(
+                f"room.tool_call.{self.name}", self._tool_call
+            )
+            room.protocol.unregister_handler(
+                f"room.tool_call_request_chunk.{self.name}",
+                self._tool_call_request_chunk,
+            )
+            self._remove_room_event_handlers(room)
+            self._room = None
+            stops = []
+            for tool in self.tools:
+                if isinstance(tool, RemoteTool):
+                    stops.append(tool.stop())
+            await asyncio.gather(*stops, return_exceptions=True)
+            raise
 
     async def stop(self):
+        room = self._room
+        if room is None:
+            return
+
+        register_task = self._register_task
+        self._register_task = None
+        if register_task is not None:
+            register_task.cancel()
+            await asyncio.gather(register_task, return_exceptions=True)
+
         stops = []
         for tool in self.tools:
             if isinstance(tool, RemoteTool):
@@ -312,14 +343,77 @@ class _RemoteToolkitWrapper(Toolkit):
                     f"Unable to stop remote tool in toolkit {self.name}", exc_info=r
                 )
 
+        self._remove_room_event_handlers(room)
         await self._unregister()
-        self._room.protocol.unregister_handler(
-            f"room.tool_call.{self.name}", self._tool_call
-        )
-        self._room.protocol.unregister_handler(
+        room.protocol.unregister_handler(f"room.tool_call.{self.name}", self._tool_call)
+        room.protocol.unregister_handler(
             f"room.tool_call_request_chunk.{self.name}",
             self._tool_call_request_chunk,
         )
+        self._room = None
+        self._registration_id = None
+
+    def _remove_room_event_handlers(self, room: RoomClient) -> None:
+        if self._room_disconnected_handler is not None:
+            room.off("disconnected", self._room_disconnected_handler)
+            self._room_disconnected_handler = None
+        if self._room_reconnected_handler is not None:
+            room.off("reconnected", self._room_reconnected_handler)
+            self._room_reconnected_handler = None
+
+    def _consume_register_task_result(self, task: asyncio.Task[None]) -> None:
+        if self._register_task is task:
+            self._register_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    def _on_room_disconnected(self, *, reason: str | None) -> None:
+        del reason
+        self._registration_id = None
+
+    def _on_room_reconnected(self) -> None:
+        room = self._room
+        if room is None:
+            return
+        if self._register_task is not None and not self._register_task.done():
+            return
+
+        async def register_current_connection() -> None:
+            current_room = self._room
+            if current_room is None:
+                return
+
+            try:
+                await self._register(public=self.public)
+            except asyncio.CancelledError:
+                raise
+            except RoomException as ex:
+                if current_room.is_closed or not current_room.is_connected:
+                    logger.debug(
+                        "skipping reconnect toolkit registration for %s",
+                        self.name,
+                        exc_info=ex,
+                    )
+                    return
+                logger.warning(
+                    "unable to re-register toolkit %s after reconnect",
+                    self.name,
+                    exc_info=ex,
+                )
+            except Exception as ex:
+                logger.warning(
+                    "unable to re-register toolkit %s after reconnect",
+                    self.name,
+                    exc_info=ex,
+                )
+
+        register_task = asyncio.create_task(register_current_connection())
+        self._register_task = register_task
+        register_task.add_done_callback(self._consume_register_task_result)
 
     def _enqueue_request_stream_chunk(
         self, *, queue: asyncio.Queue[Optional[Content]], chunk: Content
@@ -557,18 +651,31 @@ class _RemoteToolkitWrapper(Toolkit):
         self._registration_id = result["id"]
 
     async def _unregister(self):
-        await self._room.send_request(
-            "room.unregister_toolkit", {"id": self._registration_id}
-        )
+        room = self._room
+        if room is None or self._registration_id is None:
+            return
+        if room.is_closed:
+            self._registration_id = None
+            return
+
+        try:
+            await room.send_request(
+                "room.unregister_toolkit", {"id": self._registration_id}
+            )
+        except RoomException:
+            if room.is_closed:
+                self._registration_id = None
+                return
+            raise
         self._registration_id = None
 
 
 @deprecated("use ServiceHost and the cli to connect toolkits")
 async def connect_remote_toolkit(*, room_name: str, toolkit: Toolkit):
     async with RoomClient(
-        protocol=websocket_protocol(
+        protocol_factory=websocket_protocol(
             participant_name=toolkit.name, room_name=room_name, role="tool"
-        )
+        ).create_factory()
     ) as room:
         remote = _RemoteToolkitWrapper(toolkit=toolkit)
 
@@ -636,7 +743,9 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
 
         async def run():
             async with RoomClient(
-                protocol=WebSocketClientProtocol(url=room_url, token=token)
+                protocol_factory=WebSocketClientProtocol(
+                    url=room_url, token=token
+                ).create_factory()
             ) as room:
                 dismissed = asyncio.Future()
 

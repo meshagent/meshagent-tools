@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from collections.abc import AsyncIterable
 import logging
+from typing import Callable
 
 import pytest
 
@@ -39,11 +40,23 @@ class _FakeProtocol:
     def __init__(self):
         self.sent: list[_SentMessage] = []
         self.response_sent = asyncio.Future()
+        self._handlers: dict[str, Callable] = {}
 
     async def send(self, *, type: str, data: bytes, message_id: int) -> None:
         self.sent.append(_SentMessage(typ=type, data=data, message_id=message_id))
         if type == "room.tool_call_response" and not self.response_sent.done():
             self.response_sent.set_result(True)
+
+    def register_handler(self, typ: str, handler: Callable) -> None:
+        self._handlers[typ] = handler
+
+    def get_handler(self, typ: str) -> Callable | None:
+        return self._handlers.get(typ)
+
+    def unregister_handler(self, typ: str, handler: Callable) -> None:
+        current_handler = self._handlers.get(typ)
+        assert current_handler == handler
+        self._handlers.pop(typ, None)
 
 
 class _FakeMessaging:
@@ -56,14 +69,45 @@ class _FakeRoom:
         self.protocol = _FakeProtocol()
         self.messaging = _FakeMessaging()
         self.requests: list[tuple[str, dict]] = []
+        self.is_closed = False
+        self.is_connected = True
+        self._events: dict[str, list[Callable]] = {}
+        self._registration_count = 0
+
+    def on(self, event_name: str, handler: Callable) -> None:
+        self._events.setdefault(event_name, []).append(handler)
+
+    def off(self, event_name: str, handler: Callable) -> None:
+        handlers = self._events.get(event_name)
+        if handlers is None:
+            return
+        if handler in handlers:
+            handlers.remove(handler)
+        if len(handlers) == 0:
+            self._events.pop(event_name, None)
+
+    def emit(self, event_name: str, **kwargs) -> None:
+        for handler in list(self._events.get(event_name, [])):
+            handler(**kwargs)
 
     async def send_request(self, typ: str, request: dict):
         self.requests.append((typ, request))
         if typ == "room.register_toolkit":
-            return {"id": "registration-1"}
+            self._registration_count += 1
+            return {"id": f"registration-{self._registration_count}"}
         if typ == "room.unregister_toolkit":
             return {"ok": True}
         raise AssertionError(f"unexpected request: {typ}")
+
+
+async def _wait_until(
+    predicate: Callable[[], bool], *, timeout: float = 1.0, interval: float = 0.01
+) -> None:
+    async def wait_loop() -> None:
+        while not predicate():
+            await asyncio.sleep(interval)
+
+    await asyncio.wait_for(wait_loop(), timeout=timeout)
 
 
 class _CollectRequestChunksTool(ContentTool):
@@ -614,3 +658,54 @@ async def test_remote_toolkit_logs_tool_failures_as_warnings_with_exception_mess
     assert len(warning_records) == 1
     assert warning_records[0].levelno == logging.WARNING
     assert warning_records[0].message == "messaging is already enabled"
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_stop_skips_unregister_when_room_is_closed() -> None:
+    room = _FakeRoom()
+    toolkit = _make_hosted_toolkit(tools=[])
+
+    toolkit._room = room  # type: ignore[assignment]
+    toolkit._registration_id = "registration-1"
+    room.protocol.register_handler("room.tool_call.test", toolkit._tool_call)
+    room.protocol.register_handler(
+        "room.tool_call_request_chunk.test",
+        toolkit._tool_call_request_chunk,
+    )
+    room.is_closed = True
+
+    await toolkit.stop()
+
+    assert room.requests == []
+    assert toolkit._registration_id is None
+    assert room.protocol.get_handler("room.tool_call.test") is None
+    assert room.protocol.get_handler("room.tool_call_request_chunk.test") is None
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_reregisters_after_room_reconnect() -> None:
+    room = _FakeRoom()
+    toolkit = _make_hosted_toolkit(tools=[])
+
+    await toolkit.start(room=room)  # type: ignore[arg-type]
+
+    assert [typ for typ, _ in room.requests] == ["room.register_toolkit"]
+    assert toolkit._registration_id == "registration-1"
+
+    room.is_connected = False
+    room.emit("disconnected", reason="transient transport error")
+    assert toolkit._registration_id is None
+
+    room.is_connected = True
+    room.emit("reconnected")
+    await _wait_until(lambda: len(room.requests) == 2)
+
+    assert [typ for typ, _ in room.requests] == [
+        "room.register_toolkit",
+        "room.register_toolkit",
+    ]
+    assert toolkit._registration_id == "registration-2"
+
+    await toolkit.stop()
+
+    assert room._events == {}
