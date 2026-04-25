@@ -16,7 +16,7 @@ from meshagent.api.room_server_client import (
 
 import logging
 
-logger = logging.getLogger("database_toolkit")
+logger = logging.getLogger("dataset_toolkit")
 
 _EXPRESSION_JSON_SCHEMA = {
     "type": "object",
@@ -43,7 +43,7 @@ _JSON_VALUE_SCHEMA: dict[str, Any] = {
 }
 
 
-def _wrapped_database_value_json_schema(
+def _wrapped_dataset_value_json_schema(
     *,
     wrapper: str,
     payload_schema: dict[str, Any],
@@ -79,7 +79,7 @@ def _tool_input_schema_for_data_type(
         variants.append(data_type.to_json_schema())
     if isinstance(data_type, BinaryDataType):
         variants.append(
-            _wrapped_database_value_json_schema(
+            _wrapped_dataset_value_json_schema(
                 wrapper="binary",
                 payload_schema={
                     "type": "string",
@@ -89,7 +89,7 @@ def _tool_input_schema_for_data_type(
         )
     if isinstance(data_type, DateDataType):
         variants.append(
-            _wrapped_database_value_json_schema(
+            _wrapped_dataset_value_json_schema(
                 wrapper="date",
                 payload_schema={
                     "type": "string",
@@ -99,7 +99,7 @@ def _tool_input_schema_for_data_type(
         )
     if isinstance(data_type, TimestampDataType):
         variants.append(
-            _wrapped_database_value_json_schema(
+            _wrapped_dataset_value_json_schema(
                 wrapper="timestamp",
                 payload_schema={
                     "type": "string",
@@ -109,7 +109,7 @@ def _tool_input_schema_for_data_type(
         )
     if isinstance(data_type, UuidDataType):
         variants.append(
-            _wrapped_database_value_json_schema(
+            _wrapped_dataset_value_json_schema(
                 wrapper="uuid",
                 payload_schema={
                     "type": "string",
@@ -119,21 +119,21 @@ def _tool_input_schema_for_data_type(
         )
     if isinstance(data_type, ListDataType):
         variants.append(
-            _wrapped_database_value_json_schema(
+            _wrapped_dataset_value_json_schema(
                 wrapper="list",
                 payload_schema={"type": "array"},
             )
         )
     if isinstance(data_type, StructDataType):
         variants.append(
-            _wrapped_database_value_json_schema(
+            _wrapped_dataset_value_json_schema(
                 wrapper="struct",
                 payload_schema={"type": "object"},
             )
         )
     if isinstance(data_type, JsonDataType):
         variants.append(
-            _wrapped_database_value_json_schema(
+            _wrapped_dataset_value_json_schema(
                 wrapper="json",
                 payload_schema=_JSON_VALUE_SCHEMA,
             )
@@ -147,19 +147,19 @@ def _tool_input_schema_for_data_type(
     return {"anyOf": variants}
 
 
-def _normalize_database_tool_record(record: dict[str, Any]) -> dict[str, Any]:
+def _normalize_dataset_tool_record(record: dict[str, Any]) -> dict[str, Any]:
     return decode_records([record])[0]
 
 
-def _normalize_database_tool_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _normalize_dataset_tool_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return decode_records(rows)
 
 
-class _DatabaseTool(LocalRoomTool):
+class _DatasetTool(LocalRoomTool):
     pass
 
 
-class ListTablesTool(_DatabaseTool):
+class ListTablesTool(_DatasetTool):
     def __init__(self, *, room: RoomClient):
         input_schema = {
             "type": "object",
@@ -178,10 +178,10 @@ class ListTablesTool(_DatabaseTool):
 
     async def execute(self, context: ToolContext):
         del context
-        return {"tables": await self.room.database.list_tables()}
+        return {"tables": await self.room.datasets.list_tables()}
 
 
-class InsertRowsTool(_DatabaseTool):
+class InsertRowsTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -222,14 +222,14 @@ class InsertRowsTool(_DatabaseTool):
 
     async def execute(self, context: ToolContext, *, rows):
         del context
-        await self.room.database.insert(
+        await self.room.datasets.insert(
             table=self.table,
-            records=_normalize_database_tool_rows(rows),
+            records=_normalize_dataset_tool_rows(rows),
             namespace=self.namespace,
         )
 
 
-class DeleteRowsTool(_DatabaseTool):
+class DeleteRowsTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -268,9 +268,9 @@ class DeleteRowsTool(_DatabaseTool):
             if v is not None:
                 search[k] = v
         if search:
-            search = _normalize_database_tool_record(search)
+            search = _normalize_dataset_tool_record(search)
 
-        await self.room.database.delete(
+        await self.room.datasets.delete(
             table=self.table,
             where=search if len(search) > 0 else None,
             namespace=self.namespace,
@@ -278,7 +278,7 @@ class DeleteRowsTool(_DatabaseTool):
         return {"ok": True}
 
 
-class UpdateTool(_DatabaseTool):
+class UpdateTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -346,16 +346,16 @@ class UpdateTool(_DatabaseTool):
         for value in values:
             for k, v in value.items():
                 set[k] = v
-        set = _normalize_database_tool_record(set)
+        set = _normalize_dataset_tool_record(set)
 
-        await self.room.database.update(
+        await self.room.datasets.update(
             table=self.table, where=where, values=set, namespace=self.namespace
         )
 
         return {"ok": True}
 
 
-class SearchTool(_DatabaseTool):
+class SearchTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -419,10 +419,10 @@ class SearchTool(_DatabaseTool):
             if v is not None:
                 search[k] = v
         if search:
-            search = _normalize_database_tool_record(search)
+            search = _normalize_dataset_tool_record(search)
 
         return {
-            "rows": await self.room.database.search(
+            "rows": await self.room.datasets.search(
                 select=select,
                 table=self.table,
                 where=search if len(search) > 0 else None,
@@ -433,7 +433,7 @@ class SearchTool(_DatabaseTool):
         }
 
 
-class LLMSearchTool(_DatabaseTool):
+class LLMSearchTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -497,10 +497,10 @@ class LLMSearchTool(_DatabaseTool):
             if v is not None:
                 search[k] = v
         if search:
-            search = _normalize_database_tool_record(search)
+            search = _normalize_dataset_tool_record(search)
 
         return {
-            "rows": await self.room.database.search(
+            "rows": await self.room.datasets.search(
                 select=select,
                 table=self.table,
                 where=search if len(search) > 0 else None,
@@ -511,7 +511,7 @@ class LLMSearchTool(_DatabaseTool):
         }
 
 
-class SpawnTaskForEachRow(_DatabaseTool):
+class SpawnTaskForEachRow(_DatasetTool):
     def __init__(
         self,
         *,
@@ -591,9 +591,9 @@ class SpawnTaskForEachRow(_DatabaseTool):
             if v is not None:
                 search[k] = v
         if search:
-            search = _normalize_database_tool_record(search)
+            search = _normalize_dataset_tool_record(search)
 
-        rows = await self.room.database.search(
+        rows = await self.room.datasets.search(
             select=select,
             table=self.table,
             where=search if len(search) > 0 else None,
@@ -614,7 +614,7 @@ class SpawnTaskForEachRow(_DatabaseTool):
         return {f"added {len(row)} items to the queue {self.queue}"}
 
 
-class CountTool(_DatabaseTool):
+class CountTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -662,10 +662,10 @@ class CountTool(_DatabaseTool):
             if v is not None:
                 search[k] = v
         if search:
-            search = _normalize_database_tool_record(search)
+            search = _normalize_dataset_tool_record(search)
 
         return {
-            "rows": await self.room.database.count(
+            "rows": await self.room.datasets.count(
                 table=self.table,
                 where=search if len(search) > 0 else None,
                 namespace=self.namespace,
@@ -673,7 +673,7 @@ class CountTool(_DatabaseTool):
         }
 
 
-class AdvancedSearchTool(_DatabaseTool):
+class AdvancedSearchTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -713,13 +713,13 @@ class AdvancedSearchTool(_DatabaseTool):
     async def execute(self, context: ToolContext, *, where: str):
         del context
         return {
-            "rows": await self.room.database.search(
+            "rows": await self.room.datasets.search(
                 table=self.table, where=where, namespace=self.namespace
             )
         }
 
 
-class AdvancedDeleteRowsTool(_DatabaseTool):
+class AdvancedDeleteRowsTool(_DatasetTool):
     def __init__(
         self,
         *,
@@ -757,13 +757,13 @@ class AdvancedDeleteRowsTool(_DatabaseTool):
 
     async def execute(self, context: ToolContext, *, where: str):
         del context
-        await self.room.database.delete(
+        await self.room.datasets.delete(
             table=self.table, where=where, namespace=self.namespace
         )
         return {"ok": True}
 
 
-class DatabaseToolkit(Toolkit):
+class DatasetToolkit(Toolkit):
     def __init__(
         self,
         *,
@@ -820,28 +820,28 @@ class DatabaseToolkit(Toolkit):
             )
 
         super().__init__(
-            name="database",
-            title="database",
-            description="tools for interacting with meshagent databases",
+            name="dataset",
+            title="dataset",
+            description="tools for interacting with meshagent datasets",
             room=room,
             tools=tools,
         )
 
 
-async def make_database_toolkit(
+async def make_dataset_toolkit(
     *,
     room: RoomClient,
     tables: list[str],
     read_only: bool,
     namespace: Optional[list[str]] = None,
-) -> DatabaseToolkit:
+) -> DatasetToolkit:
     table_schemas = {}
     for table in tables:
-        table_schemas[table] = await room.database.inspect(
+        table_schemas[table] = await room.datasets.inspect(
             table=table,
             namespace=namespace,
         )
-    return DatabaseToolkit(
+    return DatasetToolkit(
         tables=table_schemas,
         read_only=read_only,
         namespace=namespace,

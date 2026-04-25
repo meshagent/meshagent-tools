@@ -43,9 +43,9 @@ from .script import ScriptTool
 from .memories import (
     MemoriesToolkit,
 )
-from .database import (
-    DatabaseToolkit,
-    make_database_toolkit,
+from .dataset import (
+    DatasetToolkit,
+    make_dataset_toolkit,
 )
 
 from meshagent.api import websocket_protocol, RoomClient, ParticipantToken
@@ -85,7 +85,7 @@ __all__ = [
     ContainerToolkit,
     ScriptTool,
     MemoriesToolkit,
-    DatabaseToolkit,
-    make_database_toolkit,
+    DatasetToolkit,
+    make_dataset_toolkit,
     __version__,
 ]

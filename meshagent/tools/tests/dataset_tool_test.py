@@ -12,10 +12,10 @@ from meshagent.api.room_server_client import (
     TimestampDataType,
 )
 from meshagent.tools import ToolContext
-from meshagent.tools.database import DatabaseToolkit, make_database_toolkit
+from meshagent.tools.dataset import DatasetToolkit, make_dataset_toolkit
 
 
-class _FakeDatabaseClient:
+class _FakeDatasetsClient:
     def __init__(self) -> None:
         self.insert_calls: list[dict] = []
         self.search_calls: list[dict] = []
@@ -51,7 +51,7 @@ class _FakeDatabaseClient:
 
 class _FakeRoom:
     def __init__(self) -> None:
-        self.database = _FakeDatabaseClient()
+        self.datasets = _FakeDatasetsClient()
 
 
 def _tool_context(room: _FakeRoom) -> ToolContext:
@@ -60,9 +60,9 @@ def _tool_context(room: _FakeRoom) -> ToolContext:
 
 
 @pytest.mark.asyncio
-async def test_database_toolkit_insert_rows_uses_room_database_insert() -> None:
+async def test_dataset_toolkit_insert_rows_uses_room_dataset_insert() -> None:
     room = _FakeRoom()
-    toolkit = DatabaseToolkit(
+    toolkit = DatasetToolkit(
         tables={
             "users": {
                 "id": IntDataType(),
@@ -80,7 +80,7 @@ async def test_database_toolkit_insert_rows_uses_room_database_insert() -> None:
     )
 
     assert isinstance(result, EmptyContent)
-    assert room.database.insert_calls == [
+    assert room.datasets.insert_calls == [
         {
             "table": "users",
             "records": [{"id": 1, "name": "Alice"}],
@@ -90,9 +90,9 @@ async def test_database_toolkit_insert_rows_uses_room_database_insert() -> None:
 
 
 @pytest.mark.asyncio
-async def test_database_toolkit_accepts_encoded_dates_and_timestamps() -> None:
+async def test_dataset_toolkit_accepts_encoded_dates_and_timestamps() -> None:
     room = _FakeRoom()
-    toolkit = DatabaseToolkit(
+    toolkit = DatasetToolkit(
         tables={
             "events": {
                 "event_date": DateDataType(),
@@ -119,7 +119,7 @@ async def test_database_toolkit_accepts_encoded_dates_and_timestamps() -> None:
     )
 
     assert isinstance(result, EmptyContent)
-    assert room.database.insert_calls == [
+    assert room.datasets.insert_calls == [
         {
             "table": "events",
             "records": [
@@ -134,9 +134,9 @@ async def test_database_toolkit_accepts_encoded_dates_and_timestamps() -> None:
 
 
 @pytest.mark.asyncio
-async def test_database_toolkit_advanced_search_uses_room_database_search() -> None:
+async def test_dataset_toolkit_advanced_search_uses_room_dataset_search() -> None:
     room = _FakeRoom()
-    toolkit = DatabaseToolkit(
+    toolkit = DatasetToolkit(
         tables={
             "users": {
                 "id": IntDataType(),
@@ -155,7 +155,7 @@ async def test_database_toolkit_advanced_search_uses_room_database_search() -> N
 
     assert isinstance(result, JsonContent)
     assert result.json == {"rows": [{"id": 1, "name": "Alice"}]}
-    assert room.database.search_calls == [
+    assert room.datasets.search_calls == [
         {
             "table": "users",
             "where": "id = 1",
@@ -165,18 +165,18 @@ async def test_database_toolkit_advanced_search_uses_room_database_search() -> N
 
 
 @pytest.mark.asyncio
-async def test_make_database_toolkit_uses_room_database_inspect() -> None:
+async def test_make_dataset_toolkit_uses_room_dataset_inspect() -> None:
     room = _FakeRoom()
 
-    toolkit = await make_database_toolkit(
+    toolkit = await make_dataset_toolkit(
         room=room,
         tables=["users"],
         namespace=["prod"],
         read_only=False,
     )
 
-    assert isinstance(toolkit, DatabaseToolkit)
-    assert room.database.inspect_calls == [
+    assert isinstance(toolkit, DatasetToolkit)
+    assert room.datasets.inspect_calls == [
         {
             "table": "users",
             "namespace": ["prod"],
