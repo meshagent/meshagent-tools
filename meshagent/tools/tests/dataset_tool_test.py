@@ -6,6 +6,7 @@ import pyarrow as pa
 import pytest
 
 from meshagent.api.messaging import EmptyContent, JsonContent
+from meshagent.api.room_server_client import DatasetSqlQuery, DatasetSqlStatement
 from meshagent.tools import ToolContext
 from meshagent.tools.dataset import DatasetToolkit, make_dataset_toolkit
 
@@ -15,6 +16,11 @@ class _FakeDatasetsClient:
         self.insert_calls: list[dict] = []
         self.search_calls: list[dict] = []
         self.inspect_calls: list[dict] = []
+        self.execute_sql_calls: list[dict] = []
+        self.read_sql_query_calls: list[dict] = []
+        self.close_sql_query_calls: list[dict] = []
+        self.sql_result = DatasetSqlStatement(rows_affected=0)
+        self.sql_batches: list[pa.RecordBatch] = []
 
     async def insert(self, *, table: str, records: list[dict], namespace=None) -> None:
         self.insert_calls.append(
@@ -34,7 +40,7 @@ class _FakeDatasetsClient:
                 **kwargs,
             }
         )
-        return [{"id": 1, "name": "Alice"}]
+        return pa.table({"id": [1], "name": ["Alice"]})
 
     async def inspect(self, *, table: str, namespace=None):
         self.inspect_calls.append({"table": table, "namespace": namespace})
@@ -42,6 +48,24 @@ class _FakeDatasetsClient:
             "id": pa.int64(),
             "name": pa.string(),
         }
+
+    async def execute_sql(self, *, query: str, params=None, namespace=None):
+        self.execute_sql_calls.append(
+            {
+                "query": query,
+                "params": params,
+                "namespace": namespace,
+            }
+        )
+        return self.sql_result
+
+    async def read_sql_query(self, *, query_id: str):
+        self.read_sql_query_calls.append({"query_id": query_id})
+        for batch in self.sql_batches:
+            yield batch
+
+    async def close_sql_query(self, *, query_id: str):
+        self.close_sql_query_calls.append({"query_id": query_id})
 
 
 class _FakeRoom:
@@ -157,6 +181,67 @@ async def test_dataset_toolkit_advanced_search_uses_room_dataset_search() -> Non
             "namespace": ["prod"],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_execute_sql_returns_rows_and_closes_query() -> None:
+    room = _FakeRoom()
+    schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    room.datasets.sql_result = DatasetSqlQuery(schema=schema, query_id="q1")
+    room.datasets.sql_batches = [
+        pa.record_batch([[1], ["Alice"]], schema=schema),
+    ]
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    result = await toolkit.execute(
+        context=_tool_context(room),
+        name="execute_sql",
+        input=JsonContent(json={"query": "select * from users", "params": {"id": 1}}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"kind": "query", "rows": [{"id": 1, "name": "Alice"}]}
+    assert room.datasets.execute_sql_calls[0]["query"] == "select * from users"
+    assert room.datasets.execute_sql_calls[0]["namespace"] == ["prod"]
+    assert room.datasets.execute_sql_calls[0]["params"].to_pylist() == [{"id": 1}]
+    assert room.datasets.read_sql_query_calls == [{"query_id": "q1"}]
+    assert room.datasets.close_sql_query_calls == [{"query_id": "q1"}]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_execute_sql_returns_statement_result() -> None:
+    room = _FakeRoom()
+    room.datasets.sql_result = DatasetSqlStatement(rows_affected=3)
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    result = await toolkit.execute(
+        context=_tool_context(room),
+        name="execute_sql",
+        input=JsonContent(json={"query": "delete from users where id = 1"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"kind": "statement", "rows_affected": 3}
+    assert room.datasets.read_sql_query_calls == []
+    assert room.datasets.close_sql_query_calls == []
 
 
 @pytest.mark.asyncio

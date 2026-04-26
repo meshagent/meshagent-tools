@@ -4,6 +4,8 @@ from typing import Any, Optional
 import pyarrow as pa
 from meshagent.api.room_server_client import (
     decode_records,
+    DatasetSqlQuery,
+    DatasetSqlStatement,
     RoomClient,
 )
 
@@ -783,6 +785,83 @@ class AdvancedDeleteRowsTool(_DatasetTool):
         return {"ok": True}
 
 
+class ExecuteSqlTool(_DatasetTool):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        namespace: Optional[list[str]] = None,
+    ):
+        self.namespace = namespace
+
+        super().__init__(
+            room=room,
+            name="execute_sql",
+            title="execute SQL",
+            description=(
+                "execute a DataFusion SQL query or statement against the room datasets. "
+                "SELECT-like commands return rows; update, delete, DDL, and other statements return rows_affected."
+            ),
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "additionalProperties": False,
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "a DataFusion SQL query or statement",
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": "optional named parameter values encoded as a single JSON object",
+                        "additionalProperties": _JSON_VALUE_SCHEMA,
+                    },
+                },
+            },
+        )
+
+    async def execute(
+        self,
+        context: ToolContext,
+        *,
+        query: str,
+        params: Optional[dict[str, Any]] = None,
+    ):
+        del context
+        arrow_params = None
+        if params:
+            arrow_params = pa.Table.from_pylist(
+                [_normalize_dataset_tool_record(params)]
+            )
+
+        result = await self.room.datasets.execute_sql(
+            query=query,
+            params=arrow_params,
+            namespace=self.namespace,
+        )
+        if isinstance(result, DatasetSqlStatement):
+            return {
+                "kind": "statement",
+                "rows_affected": result.rows_affected,
+            }
+        if not isinstance(result, DatasetSqlQuery):
+            raise TypeError(f"Unexpected SQL result type: {type(result).__name__}")
+
+        try:
+            batches = []
+            async for batch in self.room.datasets.read_sql_query(
+                query_id=result.query_id,
+            ):
+                batches.append(batch)
+            table = pa.Table.from_batches(batches, schema=result.schema)
+            return {
+                "kind": "query",
+                "rows": _dataset_rows(table),
+            }
+        finally:
+            await self.room.datasets.close_sql_query(query_id=result.query_id)
+
+
 class DatasetToolkit(Toolkit):
     def __init__(
         self,
@@ -794,6 +873,7 @@ class DatasetToolkit(Toolkit):
     ):
         tools = [
             # ListTablesTool()
+            ExecuteSqlTool(room=room, namespace=namespace),
         ]
 
         for table, schema in tables.items():
