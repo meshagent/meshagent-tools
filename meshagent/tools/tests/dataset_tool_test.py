@@ -2,15 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+import pyarrow as pa
 import pytest
 
 from meshagent.api.messaging import EmptyContent, JsonContent
-from meshagent.api.room_server_client import (
-    DateDataType,
-    IntDataType,
-    TextDataType,
-    TimestampDataType,
-)
 from meshagent.tools import ToolContext
 from meshagent.tools.dataset import DatasetToolkit, make_dataset_toolkit
 
@@ -44,8 +39,8 @@ class _FakeDatasetsClient:
     async def inspect(self, *, table: str, namespace=None):
         self.inspect_calls.append({"table": table, "namespace": namespace})
         return {
-            "id": IntDataType(),
-            "name": TextDataType(),
+            "id": pa.int64(),
+            "name": pa.string(),
         }
 
 
@@ -65,8 +60,8 @@ async def test_dataset_toolkit_insert_rows_uses_room_dataset_insert() -> None:
     toolkit = DatasetToolkit(
         tables={
             "users": {
-                "id": IntDataType(),
-                "name": TextDataType(),
+                "id": pa.int64(),
+                "name": pa.string(),
             }
         },
         namespace=["prod"],
@@ -95,8 +90,8 @@ async def test_dataset_toolkit_accepts_encoded_dates_and_timestamps() -> None:
     toolkit = DatasetToolkit(
         tables={
             "events": {
-                "event_date": DateDataType(),
-                "created_at": TimestampDataType(),
+                "event_date": pa.date32(),
+                "created_at": pa.timestamp("us"),
             }
         },
         namespace=["prod"],
@@ -139,8 +134,8 @@ async def test_dataset_toolkit_advanced_search_uses_room_dataset_search() -> Non
     toolkit = DatasetToolkit(
         tables={
             "users": {
-                "id": IntDataType(),
-                "name": TextDataType(),
+                "id": pa.int64(),
+                "name": pa.string(),
             }
         },
         namespace=["prod"],

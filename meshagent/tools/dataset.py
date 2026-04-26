@@ -1,15 +1,8 @@
 from .tool import LocalRoomTool
 from .toolkit import ToolContext, Toolkit
 from typing import Any, Optional
+import pyarrow as pa
 from meshagent.api.room_server_client import (
-    BinaryDataType,
-    DataType,
-    DateDataType,
-    JsonDataType,
-    ListDataType,
-    TimestampDataType,
-    StructDataType,
-    UuidDataType,
     decode_records,
     RoomClient,
 )
@@ -58,26 +51,33 @@ def _wrapped_dataset_value_json_schema(
     }
 
 
+type DatasetToolSchemaValue = pa.DataType | pa.Field
+
+
+def _dataset_rows(table: pa.Table) -> list[dict[str, Any]]:
+    return table.to_pylist()
+
+
+def _describe_schema_value(name: str, value: DatasetToolSchemaValue) -> str:
+    if isinstance(value, pa.Field):
+        return f"column {name} => {value}"
+    return f"column {name} => {value}"
+
+
 def _tool_input_schema_for_data_type(
-    data_type: DataType,
+    schema_value: DatasetToolSchemaValue,
     *,
     allow_expression: bool = False,
 ) -> dict[str, Any]:
+    if isinstance(schema_value, pa.Field):
+        data_type = schema_value.type
+        nullable = schema_value.nullable
+    else:
+        data_type = schema_value
+        nullable = True
+
     variants = list[dict[str, Any]]()
-    if not isinstance(
-        data_type,
-        (
-            BinaryDataType,
-            DateDataType,
-            JsonDataType,
-            ListDataType,
-            StructDataType,
-            TimestampDataType,
-            UuidDataType,
-        ),
-    ):
-        variants.append(data_type.to_json_schema())
-    if isinstance(data_type, BinaryDataType):
+    if pa.types.is_binary(data_type) or pa.types.is_large_binary(data_type):
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="binary",
@@ -87,7 +87,7 @@ def _tool_input_schema_for_data_type(
                 },
             )
         )
-    if isinstance(data_type, DateDataType):
+    elif pa.types.is_date(data_type):
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="date",
@@ -97,7 +97,7 @@ def _tool_input_schema_for_data_type(
                 },
             )
         )
-    if isinstance(data_type, TimestampDataType):
+    elif pa.types.is_timestamp(data_type):
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="timestamp",
@@ -107,7 +107,7 @@ def _tool_input_schema_for_data_type(
                 },
             )
         )
-    if isinstance(data_type, UuidDataType):
+    elif data_type == pa.uuid():
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="uuid",
@@ -117,30 +117,42 @@ def _tool_input_schema_for_data_type(
                 },
             )
         )
-    if isinstance(data_type, ListDataType):
+    elif (
+        pa.types.is_list(data_type)
+        or pa.types.is_large_list(data_type)
+        or pa.types.is_fixed_size_list(data_type)
+    ):
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="list",
                 payload_schema={"type": "array"},
             )
         )
-    if isinstance(data_type, StructDataType):
+    elif pa.types.is_struct(data_type):
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="struct",
                 payload_schema={"type": "object"},
             )
         )
-    if isinstance(data_type, JsonDataType):
+    elif hasattr(pa, "json_") and data_type == pa.json_():
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="json",
                 payload_schema=_JSON_VALUE_SCHEMA,
             )
         )
+    elif pa.types.is_boolean(data_type):
+        variants.append({"type": "boolean"})
+    elif pa.types.is_integer(data_type) or pa.types.is_floating(data_type):
+        variants.append({"type": "number"})
+    elif pa.types.is_string(data_type) or pa.types.is_large_string(data_type):
+        variants.append({"type": "string"})
+    else:
+        variants.append(_JSON_VALUE_SCHEMA)
     if allow_expression:
         variants.append(_EXPRESSION_JSON_SCHEMA)
-    if data_type.nullable:
+    if nullable:
         variants.append({"type": "null"})
     if len(variants) == 1:
         return variants[0]
@@ -187,7 +199,7 @@ class InsertRowsTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -235,7 +247,7 @@ class DeleteRowsTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -284,7 +296,7 @@ class UpdateTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -293,7 +305,7 @@ class UpdateTool(_DatasetTool):
         columns = ""
 
         for k, v in schema.items():
-            columns += f"column {k} => {v.model_dump(mode='json')}"
+            columns += _describe_schema_value(k, v)
 
         anyOf = []
 
@@ -361,7 +373,7 @@ class SearchTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -422,13 +434,15 @@ class SearchTool(_DatasetTool):
             search = _normalize_dataset_tool_record(search)
 
         return {
-            "rows": await self.room.datasets.search(
-                select=select,
-                table=self.table,
-                where=search if len(search) > 0 else None,
-                namespace=self.namespace,
-                offset=offset,
-                limit=limit,
+            "rows": _dataset_rows(
+                await self.room.datasets.search(
+                    select=select,
+                    table=self.table,
+                    where=search if len(search) > 0 else None,
+                    namespace=self.namespace,
+                    offset=offset,
+                    limit=limit,
+                )
             )
         }
 
@@ -439,7 +453,7 @@ class LLMSearchTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -500,13 +514,15 @@ class LLMSearchTool(_DatasetTool):
             search = _normalize_dataset_tool_record(search)
 
         return {
-            "rows": await self.room.datasets.search(
-                select=select,
-                table=self.table,
-                where=search if len(search) > 0 else None,
-                namespace=self.namespace,
-                offset=offset,
-                limit=limit,
+            "rows": _dataset_rows(
+                await self.room.datasets.search(
+                    select=select,
+                    table=self.table,
+                    where=search if len(search) > 0 else None,
+                    namespace=self.namespace,
+                    offset=offset,
+                    limit=limit,
+                )
             )
         }
 
@@ -517,7 +533,7 @@ class SpawnTaskForEachRow(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         prompt: str,
         queue: str,
         namespace: Optional[list[str]] = None,
@@ -593,13 +609,15 @@ class SpawnTaskForEachRow(_DatasetTool):
         if search:
             search = _normalize_dataset_tool_record(search)
 
-        rows = await self.room.datasets.search(
-            select=select,
-            table=self.table,
-            where=search if len(search) > 0 else None,
-            namespace=self.namespace,
-            offset=offset,
-            limit=limit,
+        rows = _dataset_rows(
+            await self.room.datasets.search(
+                select=select,
+                table=self.table,
+                where=search if len(search) > 0 else None,
+                namespace=self.namespace,
+                offset=offset,
+                limit=limit,
+            )
         )
 
         logger.info(
@@ -620,7 +638,7 @@ class CountTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -679,7 +697,7 @@ class AdvancedSearchTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -688,7 +706,7 @@ class AdvancedSearchTool(_DatasetTool):
         columns = ""
 
         for k, v in schema.items():
-            columns += f"column {k} => {v.model_dump(mode='json')}\n"
+            columns += f"{_describe_schema_value(k, v)}\n"
 
         input_schema = {
             "type": "object",
@@ -713,8 +731,10 @@ class AdvancedSearchTool(_DatasetTool):
     async def execute(self, context: ToolContext, *, where: str):
         del context
         return {
-            "rows": await self.room.datasets.search(
-                table=self.table, where=where, namespace=self.namespace
+            "rows": _dataset_rows(
+                await self.room.datasets.search(
+                    table=self.table, where=where, namespace=self.namespace
+                )
             )
         }
 
@@ -725,7 +745,7 @@ class AdvancedDeleteRowsTool(_DatasetTool):
         *,
         room: RoomClient,
         table: str,
-        schema: dict[str, DataType],
+        schema: dict[str, DatasetToolSchemaValue],
         namespace: Optional[list[str]] = None,
     ):
         self.table = table
@@ -733,7 +753,7 @@ class AdvancedDeleteRowsTool(_DatasetTool):
         columns = ""
 
         for k, v in schema.items():
-            columns += f"column {k} => {v.model_dump(mode='json')}"
+            columns += _describe_schema_value(k, v)
 
         input_schema = {
             "type": "object",
@@ -767,7 +787,7 @@ class DatasetToolkit(Toolkit):
     def __init__(
         self,
         *,
-        tables: dict[str, dict[str, DataType]],
+        tables: dict[str, dict[str, DatasetToolSchemaValue]],
         read_only: bool = False,
         namespace: Optional[list[str]] = None,
         room: RoomClient,
