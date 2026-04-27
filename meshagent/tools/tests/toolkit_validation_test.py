@@ -207,6 +207,30 @@ async def test_toolkit_execute_uses_descriptive_span_name(
 
 
 @pytest.mark.asyncio
+async def test_toolkit_execute_can_suppress_tool_call_spans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded_tracer = _RecordedTracer()
+    monkeypatch.setattr(toolkit_module, "tracer", recorded_tracer)
+    toolkit = Toolkit(
+        name="math-toolkit",
+        tools=[_AddTool()],
+        trace_tool_calls=False,
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.execute(
+        context=context,
+        name="add",
+        input=JsonContent(json={"a": 1, "b": 2}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"c": 3}
+    assert recorded_tracer.spans == []
+
+
+@pytest.mark.asyncio
 async def test_toolkit_execute_respects_explicit_validation_mode() -> None:
     toolkit = Toolkit(name="test", tools=[_AddTool()])
     context = ToolContext(caller=object())

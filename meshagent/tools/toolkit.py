@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterable
+from contextlib import nullcontext
 import json
 from typing import Any, Optional, Literal
 
@@ -30,6 +31,17 @@ from meshagent.tools.tool import (
 from opentelemetry import trace
 
 tracer = trace.get_tracer("meshagent.tools")
+
+
+class _NoopSpan:
+    def set_attribute(self, name: str, value: object) -> None:
+        del name, value
+
+    def set_attributes(self, attributes: dict[str, object]) -> None:
+        del attributes
+
+
+_NOOP_SPAN = _NoopSpan()
 
 
 class InvalidToolDataException(RoomException):
@@ -110,6 +122,7 @@ class Toolkit:
         client_options: dict | None = None,
         hidden: bool = False,
         room: RoomClient | None = None,
+        trace_tool_calls: bool = True,
     ):
         if validation_mode not in ("full", "content_types", "none"):
             raise ValueError(
@@ -131,6 +144,7 @@ class Toolkit:
         self.client_options = client_options
         self.hidden = hidden
         self._room = room
+        self.trace_tool_calls = trace_tool_calls
 
     @property
     def room(self) -> RoomClient:
@@ -159,6 +173,7 @@ class Toolkit:
             client_options=self.client_options,
             hidden=self.hidden,
             room=self._room,
+            trace_tool_calls=self.trace_tool_calls,
         )
 
     @staticmethod
@@ -361,13 +376,18 @@ class Toolkit:
         input: Content | AsyncIterable[Content],
         validation_mode: ValidationMode = "full",
     ):
-        with tracer.start_as_current_span(
-            build_tool_span_name(
-                operation="execute",
-                toolkit_name=self.name,
-                tool_name=name,
+        if self.trace_tool_calls:
+            span_context = tracer.start_as_current_span(
+                build_tool_span_name(
+                    operation="execute",
+                    toolkit_name=self.name,
+                    tool_name=name,
+                )
             )
-        ) as span:
+        else:
+            span_context = nullcontext(_NOOP_SPAN)
+
+        with span_context as span:
             span.set_attributes({"toolkit": self.name, "tool": name})
             validate_function_schema = validation_mode == "full"
 
