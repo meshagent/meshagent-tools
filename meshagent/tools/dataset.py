@@ -54,6 +54,15 @@ def _wrapped_dataset_value_json_schema(
 
 
 type DatasetToolSchemaValue = pa.DataType | pa.Field
+type DatasetToolSchema = dict[str, DatasetToolSchemaValue] | pa.Schema
+
+
+def _normalize_dataset_tool_schema(
+    schema: DatasetToolSchema,
+) -> dict[str, DatasetToolSchemaValue]:
+    if isinstance(schema, pa.Schema):
+        return {field.name: field for field in schema}
+    return schema
 
 
 def _dataset_rows(table: pa.Table) -> list[dict[str, Any]]:
@@ -848,12 +857,27 @@ class ExecuteSqlTool(_DatasetTool):
             raise TypeError(f"Unexpected SQL result type: {type(result).__name__}")
 
         try:
+            tables = []
             batches = []
-            async for batch in self.room.datasets.read_sql_query(
+            async for chunk in self.room.datasets.read_sql_query(
                 query_id=result.query_id,
             ):
-                batches.append(batch)
-            table = pa.Table.from_batches(batches, schema=result.schema)
+                if isinstance(chunk, pa.Table):
+                    tables.append(chunk)
+                elif isinstance(chunk, pa.RecordBatch):
+                    batches.append(chunk)
+                else:
+                    raise TypeError(
+                        f"Unexpected SQL chunk type: {type(chunk).__name__}"
+                    )
+            if batches:
+                tables.append(pa.Table.from_batches(batches, schema=result.schema))
+            if len(tables) == 1:
+                table = tables[0]
+            elif tables:
+                table = pa.concat_tables(tables)
+            else:
+                table = pa.Table.from_batches([], schema=result.schema)
             return {
                 "kind": "query",
                 "rows": _dataset_rows(table),
@@ -866,17 +890,21 @@ class DatasetToolkit(Toolkit):
     def __init__(
         self,
         *,
-        tables: dict[str, dict[str, DatasetToolSchemaValue]],
+        tables: dict[str, DatasetToolSchema],
         read_only: bool = False,
         namespace: Optional[list[str]] = None,
         room: RoomClient,
     ):
+        table_schemas = {
+            table: _normalize_dataset_tool_schema(schema)
+            for table, schema in tables.items()
+        }
         tools = [
             # ListTablesTool()
             ExecuteSqlTool(room=room, namespace=namespace),
         ]
 
-        for table, schema in tables.items():
+        for table, schema in table_schemas.items():
             if not read_only:
                 tools.append(
                     InsertRowsTool(
