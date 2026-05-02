@@ -8,6 +8,7 @@ from meshagent.api.room_server_client import (
     DatasetSqlStatement,
     RoomClient,
 )
+from meshagent.tools.strict_schema import ensure_strict_json_schema
 
 import logging
 
@@ -26,10 +27,25 @@ _EXPRESSION_JSON_SCHEMA = {
 }
 
 
+_JSON_SCALAR_VALUE_SCHEMA: dict[str, Any] = {
+    "anyOf": [
+        {"type": "string"},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"},
+    ]
+}
+
 _JSON_VALUE_SCHEMA: dict[str, Any] = {
     "anyOf": [
-        {"type": "object"},
-        {"type": "array"},
+        {
+            "type": "object",
+            "additionalProperties": _JSON_SCALAR_VALUE_SCHEMA,
+        },
+        {
+            "type": "array",
+            "items": _JSON_SCALAR_VALUE_SCHEMA,
+        },
         {"type": "string"},
         {"type": "number"},
         {"type": "boolean"},
@@ -136,14 +152,17 @@ def _tool_input_schema_for_data_type(
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="list",
-                payload_schema={"type": "array"},
+                payload_schema={"type": "array", "items": _JSON_VALUE_SCHEMA},
             )
         )
     elif pa.types.is_struct(data_type):
         variants.append(
             _wrapped_dataset_value_json_schema(
                 wrapper="struct",
-                payload_schema={"type": "object"},
+                payload_schema={
+                    "type": "object",
+                    "additionalProperties": _JSON_VALUE_SCHEMA,
+                },
             )
         )
     elif hasattr(pa, "json_") and data_type == pa.json_():
@@ -179,7 +198,11 @@ def _normalize_dataset_tool_rows(rows: list[dict[str, Any]]) -> list[dict[str, A
 
 
 class _DatasetTool(LocalRoomTool):
-    pass
+    def __init__(self, **kwargs: Any) -> None:
+        input_schema = kwargs.get("input_schema")
+        if input_schema is not None:
+            kwargs["input_schema"] = ensure_strict_json_schema(input_schema)
+        super().__init__(**kwargs)
 
 
 class ListTablesTool(_DatasetTool):
@@ -821,9 +844,14 @@ class ExecuteSqlTool(_DatasetTool):
                         "description": "a DataFusion SQL query or statement",
                     },
                     "params": {
-                        "type": "object",
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "additionalProperties": _JSON_VALUE_SCHEMA,
+                            },
+                            {"type": "null"},
+                        ],
                         "description": "optional named parameter values encoded as a single JSON object",
-                        "additionalProperties": _JSON_VALUE_SCHEMA,
                     },
                 },
             },

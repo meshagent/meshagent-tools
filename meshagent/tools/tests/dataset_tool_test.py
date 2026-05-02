@@ -9,6 +9,7 @@ from meshagent.api.messaging import EmptyContent, JsonContent
 from meshagent.api.room_server_client import DatasetSqlQuery, DatasetSqlStatement
 from meshagent.tools import ToolContext
 from meshagent.tools.dataset import DatasetToolkit, make_dataset_toolkit
+from meshagent.tools.strict_schema import ensure_strict_json_schema
 
 
 class _FakeDatasetsClient:
@@ -76,6 +77,96 @@ class _FakeRoom:
 def _tool_context(room: _FakeRoom) -> ToolContext:
     del room
     return ToolContext(caller=object())
+
+
+def _assert_openai_function_schema_compatible(schema: object, *, path: str) -> None:
+    if isinstance(schema, list):
+        for index, item in enumerate(schema):
+            _assert_openai_function_schema_compatible(
+                item,
+                path=f"{path}.{index}",
+            )
+        return
+
+    if not isinstance(schema, dict):
+        return
+
+    if schema.get("type") == "array":
+        assert "items" in schema, f"{path}: array schema missing items"
+
+    if schema.get("type") == "object":
+        additional_properties = schema.get("additionalProperties")
+        assert additional_properties is False or isinstance(
+            additional_properties,
+            dict,
+        ), f"{path}: object schema must set additionalProperties to false or a schema"
+
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            assert set(schema.get("required", [])) == set(properties.keys()), (
+                f"{path}: object schema must require all properties"
+            )
+
+    for key in ("anyOf", "oneOf", "allOf"):
+        value = schema.get(key)
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                _assert_openai_function_schema_compatible(
+                    item,
+                    path=f"{path}.{key}.{index}",
+                )
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for name, item in properties.items():
+            _assert_openai_function_schema_compatible(
+                item,
+                path=f"{path}.properties.{name}",
+            )
+
+    additional_properties = schema.get("additionalProperties")
+    if isinstance(additional_properties, dict):
+        _assert_openai_function_schema_compatible(
+            additional_properties,
+            path=f"{path}.additionalProperties",
+        )
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        _assert_openai_function_schema_compatible(items, path=f"{path}.items")
+
+    defs = schema.get("$defs")
+    if isinstance(defs, dict):
+        for name, item in defs.items():
+            _assert_openai_function_schema_compatible(
+                item,
+                path=f"{path}.$defs.{name}",
+            )
+
+
+def test_dataset_toolkit_uses_openai_compatible_strict_input_schemas() -> None:
+    room = _FakeRoom()
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+                "metadata": pa.json_() if hasattr(pa, "json_") else pa.string(),
+                "tags": pa.list_(pa.string()),
+                "profile": pa.struct([("age", pa.int64())]),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    for tool in toolkit.tools:
+        assert tool.input_schema is not None
+        assert tool.input_schema == ensure_strict_json_schema(tool.input_schema)
+        _assert_openai_function_schema_compatible(
+            tool.input_schema,
+            path=tool.name,
+        )
 
 
 @pytest.mark.asyncio

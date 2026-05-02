@@ -58,18 +58,25 @@ def _ensure_strict_json_schema(
             )
 
     typ = json_schema.get("type")
+    additional_properties = json_schema.get("additionalProperties")
     if typ == "object" and "additionalProperties" not in json_schema:
         json_schema["additionalProperties"] = False
+    elif typ == "object" and is_dict(additional_properties):
+        json_schema["additionalProperties"] = _ensure_strict_json_schema(
+            additional_properties,
+            path=(*path, "additionalProperties"),
+            root=root,
+        )
     elif (
         typ == "object"
         and "additionalProperties" in json_schema
-        and json_schema["additionalProperties"]
+        and additional_properties is not False
     ):
         raise RoomException(
-            "additionalProperties should not be set for object types. This could be because "
-            "you're using an older version of Pydantic, or because you configured additional "
-            "properties to be allowed. If you really need this, update the function or output tool "
-            "to not use a strict schema."
+            "additionalProperties should be false or a strict schema for object types. "
+            "This could be because you're using an older version of Pydantic, or because "
+            "you configured additional properties to be allowed. If you really need this, "
+            "update the function or output tool to not use a strict schema."
         )
 
     # object types
