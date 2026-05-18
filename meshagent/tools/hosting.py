@@ -596,7 +596,6 @@ class _RemoteToolkitWrapper(Toolkit):
                     on_behalf_of=on_behalf_of,
                     name=name,
                     input=execution_input,
-                    item_id=tool_call_id,
                     send_response=send_tool_call_response,
                     send_chunk=send_tool_call_response_chunk,
                 )
