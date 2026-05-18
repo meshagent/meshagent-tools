@@ -5,7 +5,6 @@ from abc import ABC
 
 from typing import (
     Optional,
-    Dict,
     Any,
     Callable,
     Union,
@@ -65,7 +64,8 @@ def _create_execution_input_model(
     for param_name, param in signature.parameters.items():
         if param_name in ("self", "cls", "context"):
             continue
-        if hints.get(param_name) is ToolContext:
+        hint = hints.get(param_name)
+        if inspect.isclass(hint) and issubclass(hint, ToolContext):
             continue
         if param.kind in (
             inspect.Parameter.POSITIONAL_ONLY,
@@ -121,12 +121,10 @@ class ToolContext:
         *,
         caller: Participant,
         on_behalf_of: Optional[Participant] = None,
-        caller_context: Optional[Dict[str, Any]] = None,
         event_handler: Optional[Callable[[dict], None]] = None,
     ):
         self._caller = caller
         self._on_behalf_of = on_behalf_of
-        self._caller_context = caller_context
         self._event_handler = event_handler
 
     @property
@@ -137,13 +135,30 @@ class ToolContext:
     def on_behalf_of(self) -> Optional[Participant] | None:
         return self._on_behalf_of
 
-    @property
-    def caller_context(self) -> Optional[Dict[str, Any]]:
-        return self._caller_context
-
     def emit(self, event: dict):
         if self._event_handler is not None:
             self._event_handler(event)
+
+
+class RoomToolContext(ToolContext):
+    def __init__(
+        self,
+        *,
+        room: RoomClient,
+        caller: Participant,
+        on_behalf_of: Optional[Participant] = None,
+        event_handler: Optional[Callable[[dict], None]] = None,
+    ):
+        super().__init__(
+            caller=caller,
+            on_behalf_of=on_behalf_of,
+            event_handler=event_handler,
+        )
+        self._room = room
+
+    @property
+    def room(self) -> RoomClient:
+        return self._room
 
 
 class BaseTool(ABC):
@@ -159,8 +174,6 @@ class BaseTool(ABC):
         title: Optional[str] = None,
         description: Optional[str] = None,
         rules: Optional[list[str]] = None,
-        thumbnail_url: Optional[str] = None,
-        pricing: Optional[str] = None,
     ):
         self.name = name
 
@@ -173,8 +186,6 @@ class BaseTool(ABC):
 
         self.description = description
         self.rules = rules
-        self.thumbnail_url = thumbnail_url
-        self.pricing = pricing
         if input_schema is not None and not isinstance(input_schema, dict):
             raise TypeError("input_schema must be a dict when provided")
         if input_spec is not None and not isinstance(input_spec, ToolContentSpec):
@@ -245,8 +256,6 @@ class FunctionTool(BaseTool):
         title: Optional[str] = None,
         description: Optional[str] = None,
         rules: Optional[list[str]] = None,
-        thumbnail_url: Optional[str] = None,
-        pricing: Optional[str] = None,
     ):
         if not isinstance(input_schema, dict):
             raise TypeError("input_schema must be a dict")
@@ -266,8 +275,6 @@ class FunctionTool(BaseTool):
             title=title,
             description=description,
             rules=rules,
-            thumbnail_url=thumbnail_url,
-            pricing=pricing,
         )
         (
             self._execution_input_model,
@@ -322,8 +329,6 @@ class ContentTool(BaseTool):
         title: Optional[str] = None,
         description: Optional[str] = None,
         rules: Optional[list[str]] = None,
-        thumbnail_url: Optional[str] = None,
-        pricing: Optional[str] = None,
     ):
         if input_schema is not None and not isinstance(input_schema, dict):
             raise TypeError("input_schema must be a dict when provided")
@@ -338,8 +343,6 @@ class ContentTool(BaseTool):
             title=title,
             description=description,
             rules=rules,
-            thumbnail_url=thumbnail_url,
-            pricing=pricing,
         )
 
     async def execute(
@@ -357,7 +360,6 @@ def tool(
     title: Optional[str] = None,
     description: Optional[str] = None,
     rules: Optional[list[str]] = None,
-    thumbnail_url: Optional[str] = None,
 ):
     def decorator(fn: Callable[..., Content]):
         signature = inspect.signature(fn)
@@ -382,7 +384,7 @@ def tool(
             if bound_param_name == param_name:
                 continue
             annotation = hints.get(param_name, Any)
-            if annotation is ToolContext:
+            if inspect.isclass(annotation) and issubclass(annotation, ToolContext):
                 accepts_context = True
                 continue
 
@@ -406,7 +408,6 @@ def tool(
                     title=tool_title,
                     description=tool_description,
                     rules=rules,
-                    thumbnail_url=thumbnail_url,
                     input_schema=strict_schema,
                     output_spec=inferred_output_spec,
                     output_schema=inferred_output_schema,

@@ -91,8 +91,7 @@ async def test_script_tool_container_exec_truncates_success_output() -> None:
     result = await tool.execute(
         context=ToolContext(
             caller=object(),
-            caller_context={"item_id": "tool-1"},
-            event_handler=emitted.append,
+            event_handler=lambda event: emitted.append({**event, "item_id": "tool-1"}),
         )
     )
 
@@ -138,8 +137,7 @@ async def test_script_tool_local_exec_truncates_success_output() -> None:
     result = await tool.execute(
         context=ToolContext(
             caller=object(),
-            caller_context={"item_id": "tool-1"},
-            event_handler=emitted.append,
+            event_handler=lambda event: emitted.append({**event, "item_id": "tool-1"}),
         )
     )
 

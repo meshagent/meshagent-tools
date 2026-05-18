@@ -116,7 +116,6 @@ class Toolkit:
         rules: list[str] = list[str](),
         title: Optional[str] = None,
         description: Optional[str] = None,
-        thumbnail_url: Optional[str] = None,
         validation_mode: ValidationMode = "full",
         public: bool = True,
         client_options: dict | None = None,
@@ -138,7 +137,6 @@ class Toolkit:
         self.description = description
         self.tools = tools
         self.rules = rules
-        self.thumbnail_url = thumbnail_url
         self.validation_mode: ValidationMode = validation_mode
         self.public = public
         self.client_options = client_options
@@ -167,7 +165,6 @@ class Toolkit:
             rules=[*self.rules],
             title=self.title,
             description=self.description,
-            thumbnail_url=self.thumbnail_url,
             validation_mode=self.validation_mode,
             public=self.public,
             client_options=self.client_options,

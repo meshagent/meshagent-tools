@@ -135,17 +135,6 @@ def _json_output_spec(model_type: type[BaseModel]) -> ToolContentSpec:
     )
 
 
-def _item_id_from_context(context: ToolContext) -> str:
-    caller_context = context.caller_context
-    if caller_context is None:
-        return ""
-
-    item_id = caller_context.get("item_id")
-    if isinstance(item_id, str):
-        return item_id
-    return ""
-
-
 async def _stream_reader_chunks(
     reader: asyncio.StreamReader | None,
 ) -> AsyncIterable[bytes]:
@@ -560,7 +549,7 @@ class BaseContainerShellTool(LocalRoomTool):
 
         results: list[_ShellCommandResult] = []
         encoding = os.device_encoding(1) or "utf-8"
-        item_id = _item_id_from_context(context)
+        item_id = ""
 
         try:
             logger.info(
@@ -805,7 +794,7 @@ class ProcessShellTool(FunctionTool):
 
         results: list[_ShellCommandResult] = []
         encoding = os.device_encoding(1) or "utf-8"
-        item_id = _item_id_from_context(context)
+        item_id = ""
 
         for command in parsed.commands:
             logger.info(

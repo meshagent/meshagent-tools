@@ -49,21 +49,21 @@ class StreamOutputAccumulator:
         return self._truncated
 
     def _emit_output_lines(self, *, lines: list[str]) -> None:
-        if self._item_id == "" or len(lines) == 0:
+        if len(lines) == 0:
             return
-        self._context.emit(
-            {
-                "type": "meshagent.handler.output",
-                "item_id": self._item_id,
-                "lines": [
-                    {
-                        "source": self._source,
-                        "text": line,
-                    }
-                    for line in lines
-                ],
-            }
-        )
+        event = {
+            "type": "meshagent.handler.output",
+            "lines": [
+                {
+                    "source": self._source,
+                    "text": line,
+                }
+                for line in lines
+            ],
+        }
+        if self._item_id != "":
+            event["item_id"] = self._item_id
+        self._context.emit(event)
 
     def _append_result_text(self, *, text: str) -> None:
         if text == "":

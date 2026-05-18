@@ -149,8 +149,7 @@ async def test_container_shell_tool_emits_live_output_events() -> None:
     result = await tool.execute(
         context=ToolContext(
             caller=object(),
-            caller_context={"item_id": "tool-1"},
-            event_handler=emitted.append,
+            event_handler=lambda event: emitted.append({**event, "item_id": "tool-1"}),
         ),
         commands=["printf 'hello\\n'"],
     )
@@ -300,8 +299,7 @@ async def test_container_shell_tool_truncates_success_output_by_default(
     result = await tool.execute(
         context=ToolContext(
             caller=object(),
-            caller_context={"item_id": "tool-1"},
-            event_handler=emitted.append,
+            event_handler=lambda event: emitted.append({**event, "item_id": "tool-1"}),
         ),
         commands=["cat /tmp/large.txt"],
     )
@@ -348,8 +346,7 @@ async def test_container_shell_tool_chunks_long_single_log_lines(
     result = await tool.execute(
         context=ToolContext(
             caller=object(),
-            caller_context={"item_id": "tool-1"},
-            event_handler=emitted.append,
+            event_handler=lambda event: emitted.append({**event, "item_id": "tool-1"}),
         ),
         commands=["cat /tmp/app.js"],
     )
@@ -388,8 +385,7 @@ async def test_process_shell_tool_uses_working_dir_and_env(
     result = await tool.execute(
         context=ToolContext(
             caller=object(),  # type: ignore[arg-type]
-            caller_context={"item_id": "tool-1"},
-            event_handler=emitted.append,
+            event_handler=lambda event: emitted.append({**event, "item_id": "tool-1"}),
         ),
         commands=['printf \'%s|%s\' "$PWD" "$EXAMPLE_VAR"'],
     )
@@ -420,8 +416,7 @@ async def test_process_shell_tool_truncates_success_output_by_default() -> None:
     result = await tool.execute(
         context=ToolContext(
             caller=object(),  # type: ignore[arg-type]
-            caller_context={"item_id": "tool-1"},
-            event_handler=emitted.append,
+            event_handler=lambda event: emitted.append({**event, "item_id": "tool-1"}),
         ),
         commands=["printf 'abcdefghijk'"],
         max_output_length=8,

@@ -23,17 +23,6 @@ DEFAULT_CONTAINER_MOUNT_SPEC = ContainerMountSpec(
 )
 
 
-def _item_id_from_context(context: ToolContext) -> str:
-    caller_context = context.caller_context
-    if caller_context is None:
-        return ""
-
-    item_id = caller_context.get("item_id")
-    if isinstance(item_id, str):
-        return item_id
-    return ""
-
-
 async def _stream_reader_chunks(
     reader: asyncio.StreamReader | None,
 ) -> AsyncIterable[bytes]:
@@ -108,7 +97,7 @@ class ScriptTool(LocalRoomTool):
 
         results = []
         encoding = os.device_encoding(1) or "utf-8"
-        item_id = _item_id_from_context(context)
+        item_id = ""
         if self.max_output_length <= 0:
             raise ValueError("max_output_length must be greater than 0")
 

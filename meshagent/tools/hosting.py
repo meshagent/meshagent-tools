@@ -23,7 +23,7 @@ from meshagent.api.participant import Participant
 from meshagent.api.protocol import Protocol
 from meshagent.api.room_server_client import RoomClient, RoomException
 from meshagent.api.chan import ChanClosed
-from meshagent.tools.tool import ContentTool, FunctionTool, ToolContext
+from meshagent.tools.tool import ContentTool, FunctionTool, RoomToolContext, ToolContext
 from meshagent.tools.toolkit import InvalidToolDataException, Toolkit, ValidationMode
 
 from aiohttp import web
@@ -55,7 +55,7 @@ async def stream_tool_call(
     on_behalf_of: Participant | None,
     name: str,
     input: Content | AsyncIterable[Content],
-    caller_context: Optional[dict],
+    item_id: str | None = None,
     send_response: Callable[[Content], Awaitable[None]],
     send_chunk: Optional[Callable[[Any], Awaitable[None]]] = None,
 ) -> None:
@@ -94,16 +94,25 @@ async def stream_tool_call(
         if chunk_queue is not None:
 
             def handle_event(event: dict) -> None:
+                if item_id is not None and "item_id" not in event:
+                    event = {**event, "item_id": item_id}
                 chunk_queue.put_nowait(event)
 
             event_handler = handle_event
 
-        context = ToolContext(
-            caller=caller,
-            on_behalf_of=on_behalf_of,
-            caller_context=caller_context,
-            event_handler=event_handler,
-        )
+        if room is None:
+            context: ToolContext = ToolContext(
+                caller=caller,
+                on_behalf_of=on_behalf_of,
+                event_handler=event_handler,
+            )
+        else:
+            context = RoomToolContext(
+                room=room,
+                caller=caller,
+                on_behalf_of=on_behalf_of,
+                event_handler=event_handler,
+            )
 
         execution_result = await toolkit.invoke(
             context=context,
@@ -162,7 +171,6 @@ class RemoteTool(FunctionTool):
         title=None,
         description=None,
         rules=None,
-        thumbnail_url=None,
         defs=None,
     ):
         self._room: RoomClient | None = None
@@ -173,7 +181,6 @@ class RemoteTool(FunctionTool):
             title=title,
             description=description,
             rules=rules,
-            thumbnail_url=thumbnail_url,
             defs=defs,
         )
 
@@ -255,7 +262,6 @@ class _RemoteToolkitWrapper(Toolkit):
             description=toolkit.description,
             title=toolkit.title,
             tools=toolkit.tools,
-            thumbnail_url=toolkit.thumbnail_url,
             validation_mode=toolkit.validation_mode,
             public=toolkit.public if public is None else public,
         )
@@ -470,7 +476,6 @@ class _RemoteToolkitWrapper(Toolkit):
             name = message["name"]
             raw_arguments = message["arguments"]
             caller_id = message["caller_id"]
-            caller_context = message.get("caller_context", None)
             on_behalf_of_id = message.get("on_behalf_of_id", None)
             tool_call_id = message.get("tool_call_id", None)
             if not isinstance(tool_call_id, str) or tool_call_id == "":
@@ -591,7 +596,7 @@ class _RemoteToolkitWrapper(Toolkit):
                     on_behalf_of=on_behalf_of,
                     name=name,
                     input=execution_input,
-                    caller_context=caller_context,
+                    item_id=tool_call_id,
                     send_response=send_tool_call_response,
                     send_chunk=send_tool_call_response_chunk,
                 )
@@ -631,9 +636,7 @@ class _RemoteToolkitWrapper(Toolkit):
                 "output_spec": None
                 if tool.output_spec is None
                 else tool.output_spec.to_json(),
-                "thumbnail_url": tool.thumbnail_url,
                 "defs": tool.defs,
-                "pricing": tool.pricing,
                 "strict": tool.strict if isinstance(tool, FunctionTool) else None,
             }
 
@@ -645,7 +648,6 @@ class _RemoteToolkitWrapper(Toolkit):
                 "title": self.title,
                 "tools": children,
                 "public": public,
-                "thumbnail_url": self.thumbnail_url,
             },
         )
         self._registration_id = result["id"]

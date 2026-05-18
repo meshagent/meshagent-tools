@@ -4,7 +4,7 @@
 The ``meshagent.tools`` package bundles reusable tool and toolkit abstractions plus a set of out of the box MeshAgent toolkits. 
 
 ### ToolContext and BaseTool
-The ``ToolContext`` tracks the room, caller, and optional "on-behalf-of" participant. The ``BaseTool`` defines metadata used by all tools such as name and description. 
+The ``ToolContext`` tracks the caller and optional "on-behalf-of" participant. Tools that actually need a room should require a ``RoomToolContext`` or use a room-bound ``Toolkit``. The ``BaseTool`` defines metadata used by all tools such as name and description. 
 
 ### Tool and Toolkit
 A ``Tool`` encapsulates a single operation with an input JSON schema. Each tool implements an ``execute`` function where you define the logic for the tool. The ``Toolkit`` groups tools together and can enforce rules or descriptions.

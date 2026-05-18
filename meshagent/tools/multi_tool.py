@@ -16,7 +16,6 @@ class MultiTool(FunctionTool):
         title=None,
         description=None,
         rules=None,
-        thumbnail_url=None,
     ):
         self.tools = tools
         required = []
@@ -35,9 +34,6 @@ class MultiTool(FunctionTool):
 
                 if description is None:
                     description = tool.description
-
-                if thumbnail_url is None:
-                    thumbnail_url = tool.thumbnail_url
 
                 if tool.rules is not None:
                     if rules is None:
@@ -77,7 +73,6 @@ class MultiTool(FunctionTool):
             title=title,
             description=description,
             rules=rules,
-            thumbnail_url=thumbnail_url,
             input_schema=input_schema,
             defs=defs,
         )
@@ -132,5 +127,4 @@ class MultiToolkit(Toolkit):
             rules=base_toolkit.rules,
             title=base_toolkit.title,
             description=base_toolkit.description,
-            thumbnail_url=base_toolkit.thumbnail_url,
         )
