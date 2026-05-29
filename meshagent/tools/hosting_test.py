@@ -626,6 +626,27 @@ async def test_remote_toolkit_registration_preserves_strict_tool_metadata() -> N
 
 
 @pytest.mark.asyncio
+async def test_remote_toolkit_registration_includes_annotations() -> None:
+    room = _FakeRoom()
+    toolkit = _RemoteToolkitWrapper(
+        toolkit=Toolkit(
+            name="test",
+            tools=[_StrictToggleTool(name="strict_tool", strict=True)],
+            public=True,
+            annotations={"meshagent.tool_search": "true"},
+        )
+    )
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._register(public=True)
+
+    assert len(room.requests) == 1
+    typ, request = room.requests[0]
+    assert typ == "room.register_toolkit"
+    assert request["annotations"] == {"meshagent.tool_search": "true"}
+
+
+@pytest.mark.asyncio
 async def test_remote_toolkit_logs_tool_failures_as_warnings_with_exception_message(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -120,6 +120,7 @@ class Toolkit:
         public: bool = True,
         client_options: dict | None = None,
         hidden: bool = False,
+        annotations: dict[str, str] | None = None,
         room: RoomClient | None = None,
         trace_tool_calls: bool = True,
     ):
@@ -141,6 +142,7 @@ class Toolkit:
         self.public = public
         self.client_options = client_options
         self.hidden = hidden
+        self.annotations = dict(annotations or {})
         self._room = room
         self.trace_tool_calls = trace_tool_calls
 
@@ -169,6 +171,7 @@ class Toolkit:
             public=self.public,
             client_options=self.client_options,
             hidden=self.hidden,
+            annotations=dict(self.annotations),
             room=self._room,
             trace_tool_calls=self.trace_tool_calls,
         )

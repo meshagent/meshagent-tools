@@ -264,6 +264,7 @@ class _RemoteToolkitWrapper(Toolkit):
             tools=toolkit.tools,
             validation_mode=toolkit.validation_mode,
             public=toolkit.public if public is None else public,
+            annotations=toolkit.annotations,
         )
         self._registration_id = None
 
@@ -647,6 +648,7 @@ class _RemoteToolkitWrapper(Toolkit):
                 "title": self.title,
                 "tools": children,
                 "public": public,
+                "annotations": self.annotations,
             },
         )
         self._registration_id = result["id"]
