@@ -786,7 +786,7 @@ class RemoteToolkitServer[T: Toolkit](WebhookServer):
         )
 
 
-async def _start_hosted_toolkit(
+async def start_hosted_toolkit(
     *,
     room: RoomClient,
     toolkit: Toolkit,
