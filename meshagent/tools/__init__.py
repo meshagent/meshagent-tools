@@ -24,6 +24,7 @@ from .hosting import (
     connect_remote_toolkit,
     RemoteToolkitServer,
     RemoteTool,
+    start_hosted_toolkit,
 )
 from .multi_tool import MultiTool, MultiToolkit
 from .version import __version__
@@ -72,6 +73,7 @@ __all__ = [
     tool,
     BaseTool,
     connect_remote_toolkit,
+    start_hosted_toolkit,
     RemoteToolkitServer,
     RemoteTool,
     MultiTool,
