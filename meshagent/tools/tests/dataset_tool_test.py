@@ -334,7 +334,7 @@ def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> Non
         room=room,
         table="users",
         schema={"id": pa.int64(), "name": pa.string()},
-        prompt="{id:04d}|{score:.2f}|{score:08.2f}|{id:+d}|{id: d}|{neg:04d}|{id:x}|{id:#04x}|{id:b}|{id:o}|{id:X}|{score:e}|{name!r}|{none!s}|{{{name}}}|{name:8}|{name:>8}|{name:<8}|{name:^8}|{name:*^8}|{name:.3}|{flag!r}|{id:<8d}|{id:^8d}|{score:<8.2f}|{name:>{width}}|{score:.{precision}f}",
+        prompt="{id:04d}|{score:.2f}|{score:08.2f}|{id:+d}|{id: d}|{neg:04d}|{id:x}|{id:#04x}|{id:b}|{id:o}|{id:X}|{score:e}|{name!r}|{none!s}|{{{name}}}|{name:8}|{name:>8}|{name:<8}|{name:^8}|{name:*^8}|{name:.3}|{flag!r}|{id:<8d}|{id:^8d}|{score:<8.2f}|{name:>{width}}|{score:.{precision}f}|{id:{int_spec}}|{name:{name_spec}}|{name:08}|{name!r:>10}|{flag!s:^6}|{score!r:.4}|{name!r:>{width}}",
         queue="jobs",
         namespace=["prod"],
     )
@@ -350,9 +350,11 @@ def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> Non
             "neg": -7,
             "width": 8,
             "precision": 3,
+            "int_spec": "04d",
+            "name_spec": "*^8",
         },
     ) == {
-        "prompt": "0007|3.14|00003.14|+7| 7|-007|7|0x07|111|7|7|3.141590e+00|'Alice'|None|{Alice}|Alice   |   Alice|Alice   | Alice  |*Alice**|Ali|True|7       |   7    |3.14    |   Alice|3.142",
+        "prompt": "0007|3.14|00003.14|+7| 7|-007|7|0x07|111|7|7|3.141590e+00|'Alice'|None|{Alice}|Alice   |   Alice|Alice   | Alice  |*Alice**|Ali|True|7       |   7    |3.14    |   Alice|3.142|0007|*Alice**|Alice000|   'Alice'| True |3.14| 'Alice'",
         "row": {
             "id": 7,
             "name": "Alice",
@@ -362,8 +364,52 @@ def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> Non
             "neg": -7,
             "width": 8,
             "precision": 3,
+            "int_spec": "04d",
+            "name_spec": "*^8",
         },
     }
+
+
+@pytest.mark.parametrize("prompt", ["{}", "{01}", "{[id]}"])
+def test_spawn_task_for_each_row_prompt_format_positional_fields_use_python_errors(
+    prompt: str,
+) -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64()},
+        prompt=prompt,
+        queue="jobs",
+    )
+
+    with pytest.raises(IndexError, match="Replacement index .* out of range"):
+        tool.make_message(context=_tool_context(room), row={"id": 7, "01": "ignored"})
+
+
+@pytest.mark.parametrize(
+    ("prompt", "message"),
+    [
+        ("{id!s:04d}", "Unknown format code 'd' for object of type 'str'"),
+        ("{name!z}", "Unknown conversion specifier z"),
+        ("{name!rr}", "expected ':' after conversion specifier"),
+    ],
+)
+def test_spawn_task_for_each_row_prompt_format_conversion_errors_match_python(
+    prompt: str,
+    message: str,
+) -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt=prompt,
+        queue="jobs",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        tool.make_message(context=_tool_context(room), row={"id": 7, "name": "Alice"})
 
 
 @pytest.mark.asyncio
