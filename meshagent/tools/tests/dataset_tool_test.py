@@ -8,7 +8,11 @@ import pytest
 from meshagent.api.messaging import EmptyContent, JsonContent
 from meshagent.api.room_server_client import DatasetSqlQuery, DatasetSqlStatement
 from meshagent.tools import ToolContext
-from meshagent.tools.dataset import DatasetToolkit, make_dataset_toolkit
+from meshagent.tools.dataset import (
+    DatasetToolkit,
+    SpawnTaskForEachRow,
+    make_dataset_toolkit,
+)
 from meshagent.tools.strict_schema import ensure_strict_json_schema
 
 
@@ -69,9 +73,18 @@ class _FakeDatasetsClient:
         self.close_sql_query_calls.append({"query_id": query_id})
 
 
+class _FakeQueuesClient:
+    def __init__(self) -> None:
+        self.send_calls: list[dict] = []
+
+    async def send(self, *, name: str, message: dict, create: bool = True) -> None:
+        self.send_calls.append({"name": name, "message": message, "create": create})
+
+
 class _FakeRoom:
     def __init__(self) -> None:
         self.datasets = _FakeDatasetsClient()
+        self.queues = _FakeQueuesClient()
 
 
 def _tool_context(room: _FakeRoom) -> ToolContext:
@@ -241,6 +254,116 @@ async def test_dataset_toolkit_accepts_encoded_dates_and_timestamps() -> None:
             "namespace": ["prod"],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_accepts_encoded_binary_rows() -> None:
+    room = _FakeRoom()
+    toolkit = DatasetToolkit(
+        tables={
+            "events": {
+                "payload": pa.binary(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    result = await toolkit.execute(
+        context=_tool_context(room),
+        name="insert_events_rows",
+        input=JsonContent(json={"rows": [{"payload": {"binary": "AAEC+v8="}}]}),
+    )
+
+    assert isinstance(result, EmptyContent)
+    assert room.datasets.insert_calls == [
+        {
+            "table": "events",
+            "records": [{"payload": b"\x00\x01\x02\xfa\xff"}],
+            "namespace": ["prod"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_spawn_task_for_each_row_searches_and_queues_messages() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt="Process {id}: {name}",
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    result = await tool.execute(
+        context=_tool_context(room),
+        query={"name": "Alice", "id": None},
+        limit=5,
+        offset=1,
+        select=["id", "name"],
+    )
+
+    assert result == "added 1 items to the queue jobs"
+    assert room.datasets.search_calls == [
+        {
+            "table": "users",
+            "where": {"name": "Alice"},
+            "namespace": ["prod"],
+            "select": ["id", "name"],
+            "offset": 1,
+            "limit": 5,
+        }
+    ]
+    assert room.queues.send_calls == [
+        {
+            "name": "jobs",
+            "message": {
+                "prompt": "Process 1: Alice",
+                "row": {"id": 1, "name": "Alice"},
+            },
+            "create": True,
+        }
+    ]
+
+
+def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt="{id:04d}|{score:.2f}|{score:08.2f}|{id:+d}|{id: d}|{neg:04d}|{id:x}|{id:#04x}|{id:b}|{id:o}|{id:X}|{score:e}|{name!r}|{none!s}|{{{name}}}|{name:8}|{name:>8}|{name:<8}|{name:^8}|{name:*^8}|{name:.3}|{flag!r}|{id:<8d}|{id:^8d}|{score:<8.2f}|{name:>{width}}|{score:.{precision}f}",
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={
+            "id": 7,
+            "name": "Alice",
+            "score": 3.14159,
+            "flag": True,
+            "none": None,
+            "neg": -7,
+            "width": 8,
+            "precision": 3,
+        },
+    ) == {
+        "prompt": "0007|3.14|00003.14|+7| 7|-007|7|0x07|111|7|7|3.141590e+00|'Alice'|None|{Alice}|Alice   |   Alice|Alice   | Alice  |*Alice**|Ali|True|7       |   7    |3.14    |   Alice|3.142",
+        "row": {
+            "id": 7,
+            "name": "Alice",
+            "score": 3.14159,
+            "flag": True,
+            "none": None,
+            "neg": -7,
+            "width": 8,
+            "precision": 3,
+        },
+    }
 
 
 @pytest.mark.asyncio

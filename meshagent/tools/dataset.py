@@ -663,7 +663,7 @@ class SpawnTaskForEachRow(_DatasetTool):
                 name=self.queue, message=self.make_message(context=context, row=row)
             )
 
-        return {f"added {len(row)} items to the queue {self.queue}"}
+        return f"added {len(rows)} items to the queue {self.queue}"
 
 
 class CountTool(_DatasetTool):
