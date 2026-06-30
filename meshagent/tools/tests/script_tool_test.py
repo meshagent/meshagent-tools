@@ -163,3 +163,21 @@ async def test_script_tool_local_exec_truncates_success_output() -> None:
             ],
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_output_length", [0, -1])
+async def test_script_tool_rejects_non_positive_max_output_length_at_execute(
+    max_output_length: int,
+) -> None:
+    room = _FakeRoom()
+    tool = ScriptTool(
+        room=room,
+        name="script",
+        commands=["printf 'should not run'"],
+        image=None,
+        max_output_length=max_output_length,
+    )
+
+    with pytest.raises(ValueError, match="max_output_length must be greater than 0"):
+        await tool.execute(context=ToolContext(caller=object()))

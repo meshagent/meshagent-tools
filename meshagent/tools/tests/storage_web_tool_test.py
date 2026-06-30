@@ -6,6 +6,7 @@ from meshagent.api import RoomClient, RoomException
 from meshagent.api.messaging import FileContent, JsonContent, TextContent
 from meshagent.tools import ToolContext
 from meshagent.tools._text_utils import grep_text, truncate_text
+from meshagent.tools.blob import get_bytes_from_url
 from meshagent.tools.storage import (
     StorageToolLocalMount,
     StorageToolRoomMount,
@@ -66,6 +67,30 @@ class _FakeSession:
 
 def _tool_context() -> ToolContext:
     return ToolContext(caller=object())
+
+
+@pytest.mark.asyncio
+async def test_data_url_blob_decode_matches_python_base64_leniency() -> None:
+    blob = await get_bytes_from_url(url="data:text/plain;base64,aGVsbG8=")
+    assert blob.mime_type == "data:text/plain;base64"
+    assert blob.data == b"hello"
+
+    for encoded in ["@@@", "A Q I D", "AQID====", "=AQID", "AQ=ID", "AQ-ID", "AQ_ID"]:
+        blob = await get_bytes_from_url(url=f"data:text/plain;base64,{encoded}")
+        expected = b"" if encoded == "@@@" else b"\x01\x02\x03"
+        assert blob.data == expected
+
+    with pytest.raises(ValueError, match="only ASCII characters"):
+        await get_bytes_from_url(url="data:text/plain;base64,é")
+
+    with pytest.raises(Exception, match="Incorrect padding"):
+        await get_bytes_from_url(url="data:text/plain;base64,AQ")
+
+    with pytest.raises(
+        Exception,
+        match="number of data characters \\(5\\) cannot be 1 more than a multiple of 4",
+    ):
+        await get_bytes_from_url(url="data:,hello")
 
 
 class _FakeStorageClient:
