@@ -391,6 +391,65 @@ def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> Non
     }
 
 
+def test_spawn_task_for_each_row_prompt_format_numeric_attributes() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt="{id.real}|{id.imag}|{id.numerator}|{id.denominator}|{score.real}|{score.imag}|{id.real.real}|{id.real.imag}|{score.real.real}|{score.real.imag}|{flag.numerator}|{id.real:04d}|{score.imag:.1f}",
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={"id": 7, "score": 3.14159, "flag": True},
+    ) == {
+        "prompt": "7|0|7|1|3.14159|0.0|7|0|3.14159|0.0|1|0007|0.0",
+        "row": {"id": 7, "score": 3.14159, "flag": True},
+    }
+
+
+@pytest.mark.parametrize(
+    ("prompt", "error_type", "message"),
+    [
+        (
+            "{score.numerator}",
+            AttributeError,
+            "'float' object has no attribute 'numerator'",
+        ),
+        (
+            "{score.imag.numerator}",
+            AttributeError,
+            "'float' object has no attribute 'numerator'",
+        ),
+        ("{id.real[0]}", TypeError, "'int' object is not subscriptable"),
+        ("{name.real}", AttributeError, "'str' object has no attribute 'real'"),
+    ],
+)
+def test_spawn_task_for_each_row_prompt_format_attribute_errors_match_python(
+    prompt: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt=prompt,
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    with pytest.raises(error_type, match=message):
+        tool.make_message(
+            context=_tool_context(room),
+            row={"id": 7, "score": 3.14159, "name": "Alice"},
+        )
+
+
 def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() -> None:
     room = _FakeRoom()
     tool = SpawnTaskForEachRow(
