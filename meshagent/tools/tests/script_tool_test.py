@@ -43,6 +43,7 @@ class _FakeContainers:
     def __init__(self) -> None:
         self._running: list[_FakeContainer] = []
         self.run_calls: list[dict[str, object]] = []
+        self.run_service_calls: list[dict[str, object]] = []
         self.exec_calls: list[dict[str, object]] = []
         self.next_exec = _FakeExec(stdout_chunks=[], stderr_chunks=[])
 
@@ -52,6 +53,13 @@ class _FakeContainers:
     async def run(self, **kwargs) -> str:
         self.run_calls.append(kwargs)
         container = _FakeContainer("container-1")
+        self._running.append(container)
+        return container.id
+
+    async def run_service(self, **kwargs) -> str:
+        self.run_service_calls.append(kwargs)
+        container = _FakeContainer("service-container-1")
+        container.service_id = kwargs["service_id"]
         self._running.append(container)
         return container.id
 
@@ -118,6 +126,38 @@ async def test_script_tool_container_exec_truncates_success_output() -> None:
                     "text": "[output truncated after 8 characters]",
                 },
             ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_script_tool_service_env_uses_python_string_conversion() -> None:
+    room = _FakeRoom()
+    tool = ScriptTool(
+        room=room,
+        name="script",
+        commands=["echo hi"],
+        service_id="svc-1",
+        image=None,
+    )
+
+    await tool.execute(
+        context=ToolContext(caller=object()),
+        prompt="hello",
+        count=3,
+        enabled=True,
+        missing=None,
+    )
+
+    assert room.containers.run_service_calls == [
+        {
+            "service_id": "svc-1",
+            "env": {
+                "PROMPT": "hello",
+                "COUNT": "3",
+                "ENABLED": "True",
+                "MISSING": "None",
+            },
         }
     ]
 

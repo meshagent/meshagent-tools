@@ -121,7 +121,7 @@ class ScriptTool(LocalRoomTool):
                     env = {}
 
                     for k, v in kwargs.items():
-                        env[k.upper()] = v
+                        env[k.upper()] = str(v)
 
                         logger.info(
                             f"executing shell script in container with env {env}"
