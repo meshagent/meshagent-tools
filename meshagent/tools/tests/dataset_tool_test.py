@@ -528,6 +528,11 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
         ("1235.5", ".0f", "1236"),
         ("1234.5600", "#.0f", "1235."),
         ("1234", "#f", "1234."),
+        ("1234.5600", "F", "1234.5600"),
+        ("1234.5600", ".2F", "1234.56"),
+        ("1234.5600", "+012.2F", "+00001234.56"),
+        ("1234.5600", ",.2F", "1,234.56"),
+        ("1234.5600", "#.0F", "1235."),
         ("1234", "#.0%", "123400.%"),
         ("0.001", "#%", "0.1%"),
         ("1234.5600", "e", "1.2345600e+3"),
@@ -546,8 +551,16 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
         ("1234.5600", "g", "1234.5600"),
         ("0.0000", ".3g", "0.0000"),
         ("10.00", ".3g", "10.0"),
+        ("1234.5600", ".0g", "1e+3"),
+        ("0.001234", ".0g", "0.001"),
+        ("9.9500", ".0g", "1e+1"),
+        ("1234.5600", "#.0g", "1.e+3"),
+        ("0.001234", "#.0g", "0.001"),
         ("1000", ".3g", "1.00e+3"),
         ("1234.5600", ".3G", "1.23E+3"),
+        ("1234.5600", ".0G", "1E+3"),
+        ("9.9500", ".0G", "1E+1"),
+        ("1234.5600", "#.0G", "1.E+3"),
         ("0.0012345600", ".3g", "0.00123"),
         ("0.00012345600", ".3g", "0.000123"),
         ("999.9500", ".3g", "1.00e+3"),
@@ -562,17 +575,60 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
         ("1234.5600", ".3n", "1.23e+3"),
         ("0.0012345600", ".3n", "0.00123"),
         ("999.9500", ".3n", "1.00e+3"),
+        ("1234.5600", ".0n", "1e+3"),
+        ("0.001234", ".0n", "0.001"),
+        ("1234.5600", "#.0n", "1.e+3"),
         ("1234.5600", "+012.3n", "+00001.23e+3"),
         ("0.0012345600", "+012.3n", "+00000.00123"),
+        pytest.param(
+            "1234.5600",
+            "N",
+            "1234.5600",
+            marks=pytest.mark.filterwarnings(
+                "ignore:Format specifier 'N' is deprecated"
+            ),
+        ),
+        pytest.param(
+            "1234.5600",
+            ".3N",
+            "1.23E+3",
+            marks=pytest.mark.filterwarnings(
+                "ignore:Format specifier 'N' is deprecated"
+            ),
+        ),
+        pytest.param(
+            "1234.5600",
+            ".0N",
+            "1E+3",
+            marks=pytest.mark.filterwarnings(
+                "ignore:Format specifier 'N' is deprecated"
+            ),
+        ),
+        pytest.param(
+            "1234.5600",
+            "+012.3N",
+            "+00001.23E+3",
+            marks=pytest.mark.filterwarnings(
+                "ignore:Format specifier 'N' is deprecated"
+            ),
+        ),
         ("1", "#n", "1."),
         ("10.00", "#.3n", "10.0"),
         ("1234.5600", "*=+12.3n", "+****1.23e+3"),
         ("1234.56", "=+12.2f", "+    1234.56"),
         ("-1234.56", "=+12.2f", "-    1234.56"),
         ("1234.56", "*=+12.2f", "+****1234.56"),
+        ("1234.56", "0=+12.2f", "+00001234.56"),
+        ("-1234.56", "0=+12.2f", "-00001234.56"),
         ("-1234.56", "*=+12.2e", "-****1.23e+3"),
         ("1234.56", "=+12.2g", "+     1.2e+3"),
         ("1234.56", "*=+12.2%", "+*123456.00%"),
+        ("0.00", "z.2f", "0.00"),
+        ("0.00", "+z012.2f", "+00000000.00"),
+        ("-1.20", "z.2f", "-1.20"),
+        ("0.00", "ze", "0e-2"),
+        ("0.00", "z.2e", "0.00e+0"),
+        ("0.00", "z%", "0%"),
     ],
 )
 def test_spawn_task_for_each_row_decimal_format_rounds_like_python_decimal(
@@ -598,7 +654,42 @@ def test_spawn_task_for_each_row_decimal_format_rounds_like_python_decimal(
 
 
 @pytest.mark.parametrize(
-    "spec", ["_.2f", "_.2%", "_.2e", "_.3g", ",.3n", "_.3n", "=012.2f"]
+    "spec",
+    [
+        "_.2f",
+        "_.2%",
+        "_.2e",
+        "_.3g",
+        ",.3n",
+        "_.3n",
+        "=012.2f",
+        "q",
+        "#q",
+        "z+12.2f",
+        "+zz.2f",
+        pytest.param(
+            "#N",
+            marks=pytest.mark.filterwarnings(
+                "ignore:Format specifier 'N' is deprecated"
+            ),
+        ),
+        pytest.param(
+            ",.3N",
+            marks=pytest.mark.filterwarnings(
+                "ignore:Format specifier 'N' is deprecated"
+            ),
+        ),
+        pytest.param(
+            "_.3N",
+            marks=pytest.mark.filterwarnings(
+                "ignore:Format specifier 'N' is deprecated"
+            ),
+        ),
+        ".",
+        ".f",
+        ".xf",
+        "1.2.3f",
+    ],
 )
 def test_spawn_task_for_each_row_decimal_format_errors_match_python_decimal(
     spec: str,
@@ -618,6 +709,60 @@ def test_spawn_task_for_each_row_decimal_format_errors_match_python_decimal(
 
     with pytest.raises(ValueError, match="invalid format string"):
         tool.make_message(context=_tool_context(room), row=row)
+
+
+def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python() -> (
+    None
+):
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64()},
+        prompt="{id:{fill}{align}{width}d}|{score:{spec}}|{id:0{width}d}|{id:{align}{width}d}",
+        queue="jobs",
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={
+            "id": 7,
+            "score": 3.14159,
+            "fill": "*",
+            "align": ">",
+            "width": 8,
+            "spec": ".2f",
+        },
+    ) == {
+        "prompt": "*******7|3.14|00000007|       7",
+        "row": {
+            "id": 7,
+            "score": 3.14159,
+            "fill": "*",
+            "align": ">",
+            "width": 8,
+            "spec": ".2f",
+        },
+    }
+
+
+def test_spawn_task_for_each_row_prompt_format_float_z_sign_matches_python() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64()},
+        prompt="{negzero:z.2f}|{negzero:+z08.2f}|{negzero: z.2f}|{negzero:z.2e}|{negzero:z.2g}|{negzero:z%}|{score:z.2f}|{poszero:+z08.2f}|{amount:F}|{amount:.2F}|{amount:+08.2F}|{amount:,.2F}|{amount:#.0F}",
+        queue="jobs",
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={"negzero": -0.0, "poszero": 0.0, "score": -1.25, "amount": 1234.56},
+    ) == {
+        "prompt": "0.00|+0000.00| 0.00|0.00e+00|0|0.000000%|-1.25|+0000.00|1234.560000|1234.56|+1234.56|1,234.56|1235.",
+        "row": {"negzero": -0.0, "poszero": 0.0, "score": -1.25, "amount": 1234.56},
+    }
 
 
 @pytest.mark.parametrize("prompt", ["{}", "{01}", "{[id]}"])
@@ -707,6 +852,25 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_match_python_limit()
         ("{id:,x}", ValueError, "Cannot specify ',' with 'x'."),
         ("{id:,b}", ValueError, "Cannot specify ',' with 'b'."),
         ("{id:,o}", ValueError, "Cannot specify ',' with 'o'."),
+        (
+            "{id:z}",
+            ValueError,
+            "Negative zero coercion \\(z\\) not allowed in integer format specifier",
+        ),
+        (
+            "{id:zx}",
+            ValueError,
+            "Negative zero coercion \\(z\\) not allowed in integer format specifier",
+        ),
+        (
+            "{flag:z}",
+            ValueError,
+            "Negative zero coercion \\(z\\) not allowed in integer format specifier",
+        ),
+        ("{id:z.2d}", ValueError, "Precision not allowed in integer format specifier"),
+        ("{score:N}", ValueError, "Unknown format code 'N' for object of type 'float'"),
+        ("{id:N}", ValueError, "Unknown format code 'N' for object of type 'int'"),
+        ("{flag:N}", ValueError, "Unknown format code 'N' for object of type 'bool'"),
     ],
 )
 def test_spawn_task_for_each_row_prompt_format_numeric_errors_match_python(
