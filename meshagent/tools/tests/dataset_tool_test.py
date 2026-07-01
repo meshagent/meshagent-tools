@@ -32,7 +32,10 @@ class _FakeDatasetsClient:
         self.read_sql_query_calls: list[dict] = []
         self.close_sql_query_calls: list[dict] = []
         self.sql_result = DatasetSqlStatement(rows_affected=0)
-        self.sql_batches: list[pa.RecordBatch] = []
+        self.sql_batches: list[pa.RecordBatch | pa.Table] = []
+        self.sql_read_error: Exception | None = None
+        self.sql_close_error: Exception | None = None
+        self.search_result = pa.table({"id": [1], "name": ["Alice"]})
 
     async def insert(self, *, table: str, records: list[dict], namespace=None) -> None:
         self.insert_calls.append(
@@ -52,7 +55,7 @@ class _FakeDatasetsClient:
                 **kwargs,
             }
         )
-        return pa.table({"id": [1], "name": ["Alice"]})
+        return self.search_result
 
     async def inspect(self, *, table: str, namespace=None):
         self.inspect_calls.append({"table": table, "namespace": namespace})
@@ -73,11 +76,15 @@ class _FakeDatasetsClient:
 
     async def read_sql_query(self, *, query_id: str):
         self.read_sql_query_calls.append({"query_id": query_id})
+        if self.sql_read_error is not None:
+            raise self.sql_read_error
         for batch in self.sql_batches:
             yield batch
 
     async def close_sql_query(self, *, query_id: str):
         self.close_sql_query_calls.append({"query_id": query_id})
+        if self.sql_close_error is not None:
+            raise self.sql_close_error
 
 
 class _FakeQueuesClient:
@@ -335,6 +342,43 @@ async def test_spawn_task_for_each_row_searches_and_queues_messages() -> None:
     ]
 
 
+@pytest.mark.asyncio
+async def test_spawn_task_for_each_row_all_null_query_returns_zero_without_queue() -> (
+    None
+):
+    room = _FakeRoom()
+    room.datasets.search_result = pa.table({"id": pa.array([], type=pa.int64())})
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt="Process {id}: {name}",
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    result = await tool.execute(
+        context=_tool_context(room),
+        query={"name": None, "id": None},
+        limit=5,
+        offset=1,
+        select=["id", "name"],
+    )
+
+    assert result == "added 0 items to the queue jobs"
+    assert room.datasets.search_calls == [
+        {
+            "table": "users",
+            "where": None,
+            "namespace": ["prod"],
+            "select": ["id", "name"],
+            "offset": 1,
+            "limit": 5,
+        }
+    ]
+    assert room.queues.send_calls == []
+
+
 def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> None:
     room = _FakeRoom()
     tool = SpawnTaskForEachRow(
@@ -567,6 +611,127 @@ def test_spawn_task_for_each_row_prompt_format_attribute_errors_match_python(
         )
 
 
+def test_spawn_task_for_each_row_prompt_format_class_attributes_match_python() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={
+            "name": pa.string(),
+            "id": pa.int64(),
+            "score": pa.float64(),
+            "flag": pa.bool_(),
+            "none": pa.string(),
+            "items": pa.list_(pa.int64()),
+            "user": pa.struct([pa.field("x", pa.int64())]),
+        },
+        prompt="{name.__class__}|{name.__class__.__name__}|{name.__class__.__module__}|{id.__class__}|{score.__class__.__name__}|{flag.__class__.__name__}|{flag.__class__.__base__}|{flag.__class__.__mro__}|{none.__class__.__name__}|{items.__class__.__name__}|{user.__class__.__name__}|{name.__class__.__base__}|{name.__class__.__base__.__class__}|{name.__class__.__base__.__base__}|{name.__class__.__base__.__base__.__class__}|{name.__class__.__bases__[0].__name__}|{name.__class__.__bases__.__class__.__name__}",
+        queue="jobs",
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={
+            "name": "Alice",
+            "id": 7,
+            "score": 1.5,
+            "flag": True,
+            "none": None,
+            "items": [1],
+            "user": {"x": 1},
+        },
+    )["prompt"] == (
+        "<class 'str'>|str|builtins|<class 'int'>|float|bool|"
+        "<class 'int'>|(<class 'bool'>, <class 'int'>, <class 'object'>)|"
+        "NoneType|list|dict|<class 'object'>|<class 'type'>|None|"
+        "<class 'NoneType'>|object|tuple"
+    )
+
+    tuple_error_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"name": pa.string()},
+        prompt="{name.__class__.__bases__[x]}",
+        queue="jobs",
+    )
+    with pytest.raises(TypeError, match="tuple indices must be integers or slices"):
+        tuple_error_tool.make_message(
+            context=_tool_context(room), row={"name": "Alice"}
+        )
+
+    tuple_attribute_error_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"name": pa.string()},
+        prompt="{name.__class__.__bases__.foo}",
+        queue="jobs",
+    )
+    with pytest.raises(AttributeError, match="'tuple' object has no attribute 'foo'"):
+        tuple_attribute_error_tool.make_message(
+            context=_tool_context(room), row={"name": "Alice"}
+        )
+
+    method_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"name": pa.string()},
+        prompt="{name.upper.__name__}|{name.upper.__qualname__}|{name.upper.__self__}|{name.upper.__self__.__class__.__name__}|{name.upper.__class__}|{name.upper.__class__.__name__}|{name.upper.__class__.__mro__}",
+        queue="jobs",
+    )
+    assert method_tool.make_message(context=_tool_context(room), row={"name": "Alice"})[
+        "prompt"
+    ] == (
+        "upper|str.upper|Alice|str|<class 'builtin_function_or_method'>|"
+        "builtin_function_or_method|(<class 'builtin_function_or_method'>, "
+        "<class 'object'>)"
+    )
+
+    method_subscript_error_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"name": pa.string()},
+        prompt="{name.upper[0]}",
+        queue="jobs",
+    )
+    with pytest.raises(
+        TypeError,
+        match="'builtin_function_or_method' object is not subscriptable",
+    ):
+        method_subscript_error_tool.make_message(
+            context=_tool_context(room), row={"name": "Alice"}
+        )
+
+    method_attribute_error_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"name": pa.string()},
+        prompt="{name.upper.foo}",
+        queue="jobs",
+    )
+    with pytest.raises(
+        AttributeError,
+        match="'builtin_function_or_method' object has no attribute 'foo'",
+    ):
+        method_attribute_error_tool.make_message(
+            context=_tool_context(room), row={"name": "Alice"}
+        )
+
+    method_format_error_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"name": pa.string()},
+        prompt="{name.upper:>8}",
+        queue="jobs",
+    )
+    with pytest.raises(
+        TypeError,
+        match="unsupported format string passed to builtin_function_or_method.__format__",
+    ):
+        method_format_error_tool.make_message(
+            context=_tool_context(room), row={"name": "Alice"}
+        )
+
+
 def test_spawn_task_for_each_row_prompt_format_list_index_overflow_matches_python() -> (
     None
 ):
@@ -687,6 +852,71 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
         "1234.5600|0|0|39|9999-12-31|0001-01-01|1 day, 0:00:00|"
         "9999-12-31 23:59:59.999999|0001-01-01 00:00:00|0:00:00.000001"
     )
+
+    class_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={
+            "event_date": pa.date32(),
+            "created_at": pa.timestamp("us", tz="UTC"),
+            "price": pa.decimal128(12, 4),
+            "payload": pa.binary(),
+            "quote_payload": pa.binary(),
+        },
+        prompt="{event_date.__class__}|{event_date.__class__.__name__}|{event_date.__class__.__module__}|{created_at.__class__}|{created_at.__class__.__name__}|{created_at.__class__.__base__}|{created_at.__class__.__base__.__base__.__name__}|{created_at.__class__.__mro__}|{created_at.tzinfo.__class__}|{created_at.tzinfo.__class__.__module__}|{created_at.tzinfo.__class__.__base__.__base__.__name__}|{created_at.tzinfo.__class__.__mro__}|{price.__class__}|{price.__class__.__name__}|{payload.__class__}|{payload.__class__.__name__}",
+        queue="jobs",
+    )
+
+    assert class_tool.make_message(context=_tool_context(room), row=row)["prompt"] == (
+        "<class 'datetime.date'>|date|datetime|<class 'datetime.datetime'>|"
+        "datetime|<class 'datetime.date'>|object|(<class 'datetime.datetime'>, "
+        "<class 'datetime.date'>, <class 'object'>)|<class 'pytz.UTC'>|pytz|"
+        "tzinfo|"
+        "(<class 'pytz.UTC'>, <class 'pytz.tzinfo.BaseTzInfo'>, "
+        "<class 'datetime.tzinfo'>, <class 'object'>)|"
+        "<class 'decimal.Decimal'>|Decimal|<class 'bytes'>|bytes"
+    )
+
+    method_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={
+            "event_date": pa.date32(),
+            "created_at": pa.timestamp("us", tz="UTC"),
+            "price": pa.decimal128(12, 4),
+            "payload": pa.binary(),
+        },
+        prompt="{payload.hex.__name__}|{payload.hex.__qualname__}|{payload.hex.__self__}|{payload.hex.__self__.__class__.__name__}|{event_date.isoformat.__name__}|{event_date.isoformat.__qualname__}|{event_date.isoformat.__self__}|{event_date.isoformat.__self__.__class__.__name__}|{created_at.isoformat.__name__}|{created_at.isoformat.__qualname__}|{created_at.isoformat.__self__}|{created_at.isoformat.__self__.__class__.__name__}|{price.as_tuple.__name__}|{price.as_tuple.__qualname__}|{price.as_tuple.__self__}|{price.as_tuple.__self__.__class__.__name__}",
+        queue="jobs",
+    )
+    assert method_tool.make_message(context=_tool_context(room), row=row)["prompt"] == (
+        "hex|bytes.hex|b'\\x00\\x01\\xfa\\xff'|bytes|isoformat|"
+        "date.isoformat|2026-04-09|date|isoformat|datetime.isoformat|"
+        "2026-04-09 12:30:45.123456+00:00|datetime|as_tuple|"
+        "Decimal.as_tuple|1234.5600|Decimal"
+    )
+
+    class_error_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"event_date": pa.date32()},
+        prompt="{event_date.__class__[0]}",
+        queue="jobs",
+    )
+    with pytest.raises(TypeError, match="type 'datetime\\.date' is not subscriptable"):
+        class_error_tool.make_message(context=_tool_context(room), row=row)
+
+    class_attribute_error_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={"event_date": pa.date32()},
+        prompt="{event_date.__class__.foo}",
+        queue="jobs",
+    )
+    with pytest.raises(
+        AttributeError, match="type object 'datetime\\.date' has no attribute 'foo'"
+    ):
+        class_attribute_error_tool.make_message(context=_tool_context(room), row=row)
 
 
 @pytest.mark.parametrize(
@@ -933,6 +1163,19 @@ def test_spawn_task_for_each_row_prompt_format_date_strftime_extra_directives() 
         ("1234.5600", "<12,.2f", "1,234.56    "),
         ("1234.5600", "^12.3g", "  1.23e+3   "),
         ("1234.5600", "^12.2%", " 123456.00% "),
+        ("1234.5600", "<=12.2f", "<<<<<1234.56"),
+        ("1234.5600", "><12.2f", "1234.56>>>>>"),
+        ("1234.5600", "^=12.2f", "^^^^^1234.56"),
+        ("1234.5600", "==12.2f", "=====1234.56"),
+        ("1234.5600", "-z12.2f", "     1234.56"),
+        ("1234.5600", "z#12.2f", "     1234.56"),
+        ("1234.5600", "0<12.2f", "1234.5600000"),
+        ("1234.5600", "0^12.2f", "001234.56000"),
+        ("1234.5600", "0>12.2f", "000001234.56"),
+        ("1234.5600", "12,.2g", "      1.2e+3"),
+        ("1234.5600", "12,.2e", "     1.23e+3"),
+        ("1234.5600", "12,.2%", " 123,456.00%"),
+        ("1234.5600", "12,", "  1,234.5600"),
         ("3.1400", "*^12.2f", "****3.14****"),
         ("1234.56", "=+12.2f", "+    1234.56"),
         ("-1234.56", "=+12.2f", "-    1234.56"),
@@ -1010,6 +1253,25 @@ def test_spawn_task_for_each_row_decimal_format_rounds_like_python_decimal(
         "1.2.3f",
         "00f",
         "00.2f",
+        "**12.2f",
+        "***12.2f",
+        "+-12.2f",
+        "-+12.2f",
+        " +12.2f",
+        "+ 12.2f",
+        "z-12.2f",
+        "#z12.2f",
+        "00=12.2f",
+        "12,.2n",
+        "12_.2f",
+        ",12.2f",
+        "_12.2f",
+        "12_",
+        "12,,.2f",
+        "12__.2f",
+        "12,_ .2f",
+        "12,_f",
+        "12_,f",
         ",,f",
         "__f",
         ",_f",
@@ -1502,6 +1764,159 @@ async def test_dataset_toolkit_execute_sql_returns_rows_and_closes_query() -> No
     assert room.datasets.execute_sql_calls[0]["query"] == "select * from users"
     assert room.datasets.execute_sql_calls[0]["namespace"] == ["prod"]
     assert room.datasets.execute_sql_calls[0]["params"].to_pylist() == [{"id": 1}]
+    assert room.datasets.read_sql_query_calls == [{"query_id": "q1"}]
+    assert room.datasets.close_sql_query_calls == [{"query_id": "q1"}]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_execute_sql_empty_query_result_closes_query() -> None:
+    room = _FakeRoom()
+    schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    room.datasets.sql_result = DatasetSqlQuery(schema=schema, query_id="q1")
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    result = await toolkit.execute(
+        context=_tool_context(room),
+        name="execute_sql",
+        input=JsonContent(json={"query": "select * from users"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"kind": "query", "rows": []}
+    assert room.datasets.read_sql_query_calls == [{"query_id": "q1"}]
+    assert room.datasets.close_sql_query_calls == [{"query_id": "q1"}]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_execute_sql_concatenates_table_chunks() -> None:
+    room = _FakeRoom()
+    schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    room.datasets.sql_result = DatasetSqlQuery(schema=schema, query_id="q1")
+    room.datasets.sql_batches = [
+        pa.table({"id": [1], "name": ["Alice"]}, schema=schema),
+        pa.table({"id": [2], "name": ["Bob"]}, schema=schema),
+    ]
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    result = await toolkit.execute(
+        context=_tool_context(room),
+        name="execute_sql",
+        input=JsonContent(json={"query": "select * from users"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "kind": "query",
+        "rows": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}],
+    }
+    assert room.datasets.read_sql_query_calls == [{"query_id": "q1"}]
+    assert room.datasets.close_sql_query_calls == [{"query_id": "q1"}]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_execute_sql_closes_query_after_read_error() -> None:
+    room = _FakeRoom()
+    schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    room.datasets.sql_result = DatasetSqlQuery(schema=schema, query_id="q1")
+    room.datasets.sql_read_error = RuntimeError("read failed")
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    with pytest.raises(RuntimeError, match="read failed"):
+        await toolkit.execute(
+            context=_tool_context(room),
+            name="execute_sql",
+            input=JsonContent(json={"query": "select * from users"}),
+        )
+
+    assert room.datasets.read_sql_query_calls == [{"query_id": "q1"}]
+    assert room.datasets.close_sql_query_calls == [{"query_id": "q1"}]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_execute_sql_returns_close_error_after_read_success() -> (
+    None
+):
+    room = _FakeRoom()
+    schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    room.datasets.sql_result = DatasetSqlQuery(schema=schema, query_id="q1")
+    room.datasets.sql_batches = [
+        pa.record_batch([[1], ["Alice"]], schema=schema),
+    ]
+    room.datasets.sql_close_error = RuntimeError("close failed")
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await toolkit.execute(
+            context=_tool_context(room),
+            name="execute_sql",
+            input=JsonContent(json={"query": "select * from users"}),
+        )
+
+    assert room.datasets.read_sql_query_calls == [{"query_id": "q1"}]
+    assert room.datasets.close_sql_query_calls == [{"query_id": "q1"}]
+
+
+@pytest.mark.asyncio
+async def test_dataset_toolkit_execute_sql_close_error_masks_read_error() -> None:
+    room = _FakeRoom()
+    schema = pa.schema([("id", pa.int64()), ("name", pa.string())])
+    room.datasets.sql_result = DatasetSqlQuery(schema=schema, query_id="q1")
+    room.datasets.sql_read_error = RuntimeError("read failed")
+    room.datasets.sql_close_error = RuntimeError("close failed")
+    toolkit = DatasetToolkit(
+        tables={
+            "users": {
+                "id": pa.int64(),
+                "name": pa.string(),
+            }
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await toolkit.execute(
+            context=_tool_context(room),
+            name="execute_sql",
+            input=JsonContent(json={"query": "select * from users"}),
+        )
+
     assert room.datasets.read_sql_query_calls == [{"query_id": "q1"}]
     assert room.datasets.close_sql_query_calls == [{"query_id": "q1"}]
 
