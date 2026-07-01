@@ -150,6 +150,220 @@ def test_html_to_markdown_media_source_fallbacks() -> None:
         assert convert(html) == expected
 
 
+def test_html_to_markdown_named_entity_decoding() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        (
+            "<p>&reg; &euro; &mdash; &ndash; &hellip; &rsquo; &lsquo; "
+            "&ldquo; &rdquo;</p>",
+            "® € — – … ’ ‘ “ ”\n",
+        ),
+        (
+            "<p>&apos; &cent; &pound; &yen; &sect; &para; &notin;</p>",
+            "' ¢ £ ¥ § ¶ ∉\n",
+        ),
+        (
+            "<p>&trade; &laquo; &raquo; &bull; &middot; &plusmn; &times; &divide;</p>",
+            "™ « » • · ± × ÷\n",
+        ),
+        (
+            "<p>&deg; &micro; &alpha; &beta; &gamma; &Delta; &Omega; &rarr;</p>",
+            "° µ α β γ Δ Ω →\n",
+        ),
+        (
+            "<p>&le; &ge; &ne; &infin; &sum; &radic; &nbsp;X</p>",
+            "≤ ≥ ≠ ∞ ∑ √ X\n",
+        ),
+        (
+            "<p>&copy &trade &raquo</p>",
+            "&copy &trade &raquo\n",
+        ),
+        (
+            "<p>&notanentity; &#xZZ; &#999999999999;</p>",
+            "&notanentity; &#xZZ; &#999999999999;\n",
+        ),
+        (
+            '<a href="/x?c=&copy;&euro;&notin;">L</a>',
+            "[L](/x?c=©€∉)\n",
+        ),
+        (
+            '<iframe src="/x?c=&copy;&euro;&notin;"></iframe>',
+            "[/x?c=&copy;&euro;&notin;](/x?c=&copy;&euro;&notin;)\n",
+        ),
+        (
+            '<video src="x&amp;y">F</video>',
+            "[x&amp;y](x&amp;y)\n\nF\n",
+        ),
+        (
+            '<video><source src="x&amp;y">F</video>',
+            "[x&amp;y](x&amp;y)\n\nF\n",
+        ),
+        (
+            '<html><head><meta name="description" content="A &copy; B">'
+            "<title>T &copy;</title></head><body><p>X</p></body></html>",
+            "---\nmeta-description: A &copy; B\ntitle: T &copy;\n---\n\n\nX\n",
+        ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_table_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        (
+            "<table><tr><td>1</td><td>2</td><td>3</td></tr><tr><td>4</td></tr></table>",
+            "\n\n- 1 2 3\n- 4\n",
+        ),
+        (
+            "<table><tr><td><p>A</p><p>B</p></td></tr></table>",
+            "\n\n| A<br>B |\n| --- |\n",
+        ),
+        (
+            '<table><tr><td COLSPAN="2">A</td><td>B</td></tr></table>',
+            "\n\n| A | B |\n| --- | --- |\n",
+        ),
+        (
+            '<table><tr><th rowspan="2">A</th><th>B</th></tr>'
+            "<tr><td>C</td></tr></table>",
+            "\n\n| A | B |\n| --- | --- |\n|  | C |\n",
+        ),
+        (
+            '<table><tr><th ROWSPAN="2">A</th><th>B</th></tr>'
+            "<tr><td>C</td></tr></table>",
+            "\n\n| A | B |\n| --- | --- |\n| C |\n",
+        ),
+        (
+            '<table><tr><th COLSPAN="2">A</th><th>B</th></tr></table>',
+            "\n\n| A | B |\n| --- | --- |\n",
+        ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_pre_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        ("<pre> line</pre>", "    line\n"),
+        ("<pre>\n\nline\n\n</pre>", "    line\n"),
+        ("<pre>line\r\nnext</pre>", "    line\n    next\n"),
+        ("<pre><span>A</span></pre>", "    A\n"),
+        ("<pre>before <code>code</code> after</pre>", "    before code after\n"),
+        ("<pre>A&nbsp;&amp;&copy;</pre>", "    A\xa0&©\n"),
+        ("<pre>a < b > c</pre>", "    a < b > c\n"),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_metadata_and_svg_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        (
+            '<html><head><meta name="a" content="A"><meta name="b" content="B">'
+            "<title>T</title></head><body><p>B</p></body></html>",
+            "---\nmeta-a: A\nmeta-b: B\ntitle: T\n---\n\n\nB\n",
+        ),
+        (
+            '<html><head><meta name="a" content=""><meta name="b">'
+            '<meta content="C"><title>T</title></head><body><p>B</p></body></html>',
+            "---\nmeta-a:\ntitle: T\n---\n\n\nB\n",
+        ),
+        (
+            '<html><head><meta name="a" content="A &copy;">'
+            '<meta property="og:title" content="OG &copy;"></head><body><p>B</p></body></html>',
+            "---\nmeta-a: A &copy;\nmeta-og:title: OG &copy;\n---\n\n\nB\n",
+        ),
+        (
+            '<html><head><meta NAME="a" content="A">'
+            '<meta name="b" CONTENT="B"></head><body><p>B</p></body></html>',
+            "B\n",
+        ),
+        (
+            "<svg><text>SVG</text></svg>",
+            "![SVG Image](data:image/svg+xml;base64,PHN2Zz48dGV4dD5TVkc8L3RleHQ+PC9zdmc+)\n",
+        ),
+        (
+            "<svg><title>T &copy;</title><text>SVG</text></svg>",
+            "![T ©](data:image/svg+xml;base64,PHN2Zz48dGl0bGU+VCAmY29weTs8L3RpdGxlPjx0ZXh0PlNWRzwvdGV4dD48L3N2Zz4=)\n",
+        ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_mathml_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        ("<math></math>", ""),
+        (
+            "<math><mtext>A&nbsp;&amp;&copy;</mtext></math>",
+            "<!-- MathML: <math><mtext>A&nbsp;&amp;&copy;</mtext></math> --> A\xa0&©\n",
+        ),
+        (
+            '<math><annotation encoding="application/x-tex">x^2</annotation>'
+            "<mi>x</mi></math>",
+            '<!-- MathML: <math><annotation encoding="application/x-tex">x^2</annotation>'
+            "<mi>x</mi></math> --> x^2x\n",
+        ),
+        (
+            '<math display="block"><mi>x</mi></math><p>A</p>',
+            '\n\n<!-- MathML: <math display="block"><mi>x</mi></math> --> x\n\nA\n',
+        ),
+        (
+            '<math DISPLAY="block"><mi>x</mi></math><p>A</p>',
+            '<!-- MathML: <math DISPLAY="block"><mi>x</mi></math> --> x\n\nA\n',
+        ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_link_attribute_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        ('<a href="x y">L</a>', "[L](<x y>)\n"),
+        ("<a href=>L</a>", "[L](<>)\n"),
+        ("<a href=x&y>L</a>", "[L](x&y)\n"),
+        ("<a href=x title=>L</a>", '[L](x "")\n'),
+        ("<a href=x title>L</a>", "[L](x)\n"),
+        ("<img src=x title=>", '![](x "")\n'),
+        ("<img src=x title>", "![](x)\n"),
+        ('<iframe src="x y"></iframe>', "[x y](x y)\n"),
+        ('<video src="x y">F</video>', "[x y](x y)\n\nF\n"),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_blockquote_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        (
+            "<blockquote><p>Quote</p><p>Two</p></blockquote><p>A</p>",
+            "> Quote\n>\n> Two\n\nA\n",
+        ),
+        (
+            "<blockquote>Quote</blockquote><p>A</p>",
+            "> Quote\n\nA\n",
+        ),
+        (
+            "<blockquote><blockquote>Deep</blockquote></blockquote>",
+            "> > Deep\n",
+        ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
 class _FakeResponse:
     def __init__(
         self,
