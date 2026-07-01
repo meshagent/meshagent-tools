@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import brotli
+import zlib
+
+import backports.zstd as zstd
+from aiohttp import ClientPayloadError
 import pytest
 
 from meshagent.api import RoomClient, RoomException
@@ -623,6 +629,152 @@ async def test_data_url_blob_decode_matches_python_base64_leniency() -> None:
         match="number of data characters \\(5\\) cannot be 1 more than a multiple of 4",
     ):
         await get_bytes_from_url(url="data:,hello")
+
+
+async def _serve_one_http_response(
+    *,
+    body: bytes,
+    content_type: str = "text/plain",
+    content_encoding: str | None = None,
+) -> tuple[asyncio.AbstractServer, int, list[str]]:
+    requests: list[str] = []
+
+    async def handle(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        request = await reader.readuntil(b"\r\n\r\n")
+        requests.append(request.decode("latin1"))
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            + f"Content-Type: {content_type}\r\n".encode()
+            + (
+                f"Content-Encoding: {content_encoding}\r\n".encode()
+                if content_encoding is not None
+                else b""
+            )
+            + f"Content-Length: {len(body)}\r\n".encode()
+            + b"Connection: close\r\n"
+            + b"\r\n"
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    return server, port, requests
+
+
+@pytest.mark.asyncio
+async def test_get_bytes_from_url_applies_host_alias_and_ignores_proxy_env(
+    monkeypatch,
+) -> None:
+    server, port, requests = await _serve_one_http_response(body=b"direct")
+    monkeypatch.setenv(
+        "MESHAGENT_HTTP_HOST_ALIASES",
+        " ignored, missing-target=, meshagent-python-alias.test = 127.0.0.1 ",
+    )
+    monkeypatch.delenv("MESHAGENT_EXTRA_CA_FILE", raising=False)
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+
+    try:
+        blob = await get_bytes_from_url(
+            url=f"http://meshagent-python-alias.test:{port}/file"
+        )
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert blob.mime_type == "text/plain"
+    assert blob.data == b"direct"
+    assert requests[0].startswith("GET /file ")
+    assert "Host: meshagent-python-alias.test:" in requests[0]
+
+
+@pytest.mark.asyncio
+async def test_get_bytes_from_url_decompresses_deflate_like_aiohttp() -> None:
+    server, _port, _requests = await _serve_one_http_response(
+        body=zlib.compress(b"ok"),
+        content_encoding="deflate",
+    )
+    port = server.sockets[0].getsockname()[1]
+
+    try:
+        blob = await get_bytes_from_url(url=f"http://127.0.0.1:{port}/file")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert blob.mime_type == "text/plain"
+    assert blob.data == b"ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content_encoding", "body"),
+    [
+        ("br", brotli.compress(b"ok")),
+        ("zstd", zstd.compress(b"ok")),
+    ],
+)
+async def test_get_bytes_from_url_decompresses_optional_encodings_like_aiohttp(
+    content_encoding: str,
+    body: bytes,
+) -> None:
+    server, _port, _requests = await _serve_one_http_response(
+        body=body,
+        content_encoding=content_encoding,
+    )
+    port = server.sockets[0].getsockname()[1]
+
+    try:
+        blob = await get_bytes_from_url(url=f"http://127.0.0.1:{port}/file")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert blob.mime_type == "text/plain"
+    assert blob.data == b"ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content_encoding", ["gzip", "deflate", "br", "zstd"])
+async def test_get_bytes_from_url_malformed_encoding_errors_match_aiohttp(
+    content_encoding: str,
+) -> None:
+    server, _port, _requests = await _serve_one_http_response(
+        body=b"not valid compressed bytes",
+        content_encoding=content_encoding,
+    )
+    port = server.sockets[0].getsockname()[1]
+
+    try:
+        with pytest.raises(
+            ClientPayloadError,
+            match=f"Can not decode content-encoding: {content_encoding}",
+        ):
+            await get_bytes_from_url(url=f"http://127.0.0.1:{port}/file")
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_get_bytes_from_url_loads_extra_ca_env_before_request(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    extra_ca_file = tmp_path / "invalid-ca.pem"
+    extra_ca_file.write_text("not a certificate")
+    monkeypatch.delenv("MESHAGENT_HTTP_HOST_ALIASES", raising=False)
+    monkeypatch.setenv("MESHAGENT_EXTRA_CA_FILE", str(extra_ca_file))
+
+    with pytest.raises(Exception, match="certificate|PEM|no start line"):
+        await get_bytes_from_url(url="http://127.0.0.1:9/file")
 
 
 class _FakeStorageClient:
