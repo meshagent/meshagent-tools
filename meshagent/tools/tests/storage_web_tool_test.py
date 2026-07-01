@@ -34,9 +34,41 @@ def test_web_infer_filename_uses_python_mimetypes_fallbacks() -> None:
         ("text/html", "downloaded-content.html"),
         ("application/json", "downloaded-content.json"),
         ("application/xhtml+xml", "downloaded-content.xhtml"),
+        ("application/xml", "downloaded-content.xsl"),
         ("application/octet-stream", "downloaded-content.bin"),
         ("application/x-tar", "downloaded-content.tar"),
         ("application/zip", "downloaded-content.zip"),
+        ("text/csv", "downloaded-content.csv"),
+        ("text/markdown", "downloaded-content.md"),
+        ("application/wasm", "downloaded-content.wasm"),
+        ("audio/mpeg", "downloaded-content.mp3"),
+        ("video/mp4", "downloaded-content.mp4"),
+        ("application/x-bzip2", "downloaded-content.bz2"),
+        ("application/x-7z-compressed", "downloaded-content.7z"),
+        ("application/x-rar-compressed", "downloaded-content.rar"),
+        ("application/vnd.ms-excel", "downloaded-content.xls"),
+        (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "downloaded-content.xlsx",
+        ),
+        ("application/msword", "downloaded-content.doc"),
+        (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "downloaded-content.docx",
+        ),
+        ("application/vnd.ms-powerpoint", "downloaded-content.ppt"),
+        (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "downloaded-content.pptx",
+        ),
+        ("application/rtf", "downloaded-content.rtf"),
+        ("text/rtf", "downloaded-content.rtf"),
+        ("application/x-sh", "downloaded-content.sh"),
+        ("application/x-python-code", "downloaded-content.pyc"),
+        ("text/css", "downloaded-content.css"),
+        ("text/javascript", "downloaded-content.js"),
+        ("application/epub+zip", "downloaded-content.epub"),
+        ("application/vnd.apple.installer+xml", "downloaded-content.mpkg"),
         ("", "downloaded-content"),
     ]
     for content_type, expected in cases:
@@ -71,6 +103,51 @@ def test_web_url_extension_matches_python_splitext_hidden_files() -> None:
         url="https://example.com/.a.pdf",
         content_type="",
     )
+
+
+def test_html_to_markdown_media_source_fallbacks() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        (
+            '<video><source src="v.mp4">Fallback</video>',
+            "[v.mp4](v.mp4)\n\nFallback\n",
+        ),
+        (
+            '<video><source src="a.mp4"><source src="b.mp4">Fallback</video>',
+            "[a.mp4](a.mp4)\n\nFallback\n",
+        ),
+        (
+            '<audio><source src="a.ogg">Fallback</audio>',
+            "[a.ogg](a.ogg)\n\nFallback\n",
+        ),
+        (
+            '<video src="v.mp4"><source src="a.mp4">Fallback</video>',
+            "[v.mp4](v.mp4)\n\nFallback\n",
+        ),
+        (
+            '<video src=""><source src="v.mp4">Fallback</video>',
+            "[v.mp4](v.mp4)\n\nFallback\n",
+        ),
+        (
+            '<video><source src=""><source src="v.mp4">Fallback</video>',
+            "Fallback\n",
+        ),
+        (
+            '<audio><source srcset="a.mp3">Fallback</audio>',
+            "Fallback\n",
+        ),
+        (
+            '<picture><source srcset="a.webp"><img src="a.png" alt="A"></picture>',
+            "![A](a.png)\n",
+        ),
+        (
+            '<iframe src="">Fallback</iframe><p>A</p>',
+            "A\n",
+        ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
 
 
 class _FakeResponse:
