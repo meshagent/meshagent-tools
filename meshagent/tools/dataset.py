@@ -609,7 +609,6 @@ class SpawnTaskForEachRow(_DatasetTool):
             },
         }
 
-        print(input_schema)
         super().__init__(
             room=room,
             name=name or f"spawn_task_for_each_{table}_row",
