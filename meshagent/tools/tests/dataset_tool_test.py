@@ -923,6 +923,17 @@ def test_spawn_task_for_each_row_prompt_format_date_strftime_extra_directives() 
         ("1E-7", "#.2", "1.E-7"),
         ("1E-7", "08,.3", "0,001E-7"),
         ("-0.0000", "z08,.2", "000.0000"),
+        ("1234.5600", "<12.2f", "1234.56     "),
+        ("1234.5600", ">12.2f", "     1234.56"),
+        ("1234.5600", "^12.2f", "  1234.56   "),
+        ("1234.5600", "*<12.2f", "1234.56*****"),
+        ("1234.5600", "*>12.2f", "*****1234.56"),
+        ("1234.5600", "*^12.2f", "**1234.56***"),
+        ("1234.5600", "<+12.2f", "+1234.56    "),
+        ("1234.5600", "<12,.2f", "1,234.56    "),
+        ("1234.5600", "^12.3g", "  1.23e+3   "),
+        ("1234.5600", "^12.2%", " 123456.00% "),
+        ("3.1400", "*^12.2f", "****3.14****"),
         ("1234.56", "=+12.2f", "+    1234.56"),
         ("-1234.56", "=+12.2f", "-    1234.56"),
         ("1234.56", "*=+12.2f", "+****1234.56"),
@@ -1071,7 +1082,9 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python(
             "{id:{spec_list[0]}}|{score:{zero}{width}.{precision}f}|"
             "{score:{zero}{width}{comma}.{precision}f}|"
             "{score:{zero}={width}{comma}.{precision}f}|"
-            "{score:{width}.{precision}}|{score:{width}.{precision}g}"
+            "{score:{width}.{precision}}|{score:{width}.{precision}g}|"
+            "{name:{brace}>{width}}|{name:{fill}{align}{width}.{precision}}|"
+            "{name:{fill}{align}{width}s}|{id:{empty}}|{id:{width!a}}"
         ),
         queue="jobs",
     )
@@ -1090,14 +1103,18 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python(
             "sign": "+",
             "hash": "#",
             "comma": ",",
+            "brace": "{",
+            "empty": "",
             "spec_obj": {"x": "04d"},
             "spec_list": ["04d"],
+            "name": "Alice",
         },
     ) == {
         "prompt": (
             "*******7|3.14|00000007|       7|00000007|00000007|"
             "0,000,007|+0000007|0x000007|0007|0007|0003.142|"
-            "0,003.142|0,003.142|    3.14|    3.14"
+            "0,003.142|0,003.142|    3.14|    3.14|{{{Alice|"
+            "*****Ali|***Alice|7|       7"
         ),
         "row": {
             "id": 7,
@@ -1111,8 +1128,11 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python(
             "sign": "+",
             "hash": "#",
             "comma": ",",
+            "brace": "{",
+            "empty": "",
             "spec_obj": {"x": "04d"},
             "spec_list": ["04d"],
+            "name": "Alice",
         },
     }
 
@@ -1196,6 +1216,72 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_match_python_limit()
         tool.make_message(
             context=_tool_context(room),
             row={"id": 7, "width": 8, "precision": 3},
+        )
+
+
+@pytest.mark.parametrize(
+    ("prompt", "error_type", "message"),
+    [
+        (
+            "{name:{{}}}",
+            ValueError,
+            "Invalid format specifier '\\{\\}' for object of type 'str'",
+        ),
+        (
+            "{name:{{{width}}}}",
+            ValueError,
+            "Invalid format specifier '\\{8\\}' for object of type 'str'",
+        ),
+        (
+            "{id:{{spec}}}",
+            ValueError,
+            "Invalid format specifier '\\{spec\\}' for object of type 'int'",
+        ),
+        (
+            "{id:{literal}}",
+            ValueError,
+            "Invalid format specifier '\\{width\\}' for object of type 'int'",
+        ),
+        ("{id:{}}", IndexError, "Replacement index 0 out of range"),
+        ("{id:{:{width}}}", IndexError, "Replacement index 0 out of range"),
+        (
+            "{id:{name!r}}",
+            ValueError,
+            "Invalid format specifier ''Alice'' for object of type 'int'",
+        ),
+        (
+            "{id:{name!s}}",
+            ValueError,
+            "Invalid format specifier 'Alice' for object of type 'int'",
+        ),
+        ("{id:{name:{precision}}}", ValueError, "Max string recursion exceeded"),
+    ],
+)
+def test_spawn_task_for_each_row_prompt_format_nested_specs_errors_match_python(
+    prompt: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt=prompt,
+        queue="jobs",
+    )
+
+    with pytest.raises(error_type, match=message):
+        tool.make_message(
+            context=_tool_context(room),
+            row={
+                "id": 7,
+                "name": "Alice",
+                "width": 8,
+                "precision": 3,
+                "spec": "04d",
+                "literal": "{width}",
+            },
         )
 
 
