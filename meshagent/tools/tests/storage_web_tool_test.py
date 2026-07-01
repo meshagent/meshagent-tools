@@ -184,6 +184,15 @@ def test_html_to_markdown_named_entity_decoding() -> None:
             "&notanentity; &#xZZ; &#999999999999;\n",
         ),
         (
+            "<p>&#65; &#065; &#x41; &#X41; &#x000041; &#X000041; "
+            "&#x1f600; &#X1F600;</p>",
+            "A A A A A A 😀 😀\n",
+        ),
+        (
+            "<p>&#65 &#x41 &#X41 &#xD800; &#55296;</p>",
+            "&#65 &#x41 &#X41 &#xD800; &#55296;\n",
+        ),
+        (
             '<a href="/x?c=&copy;&euro;&notin;">L</a>',
             "[L](/x?c=©€∉)\n",
         ),
@@ -203,6 +212,41 @@ def test_html_to_markdown_named_entity_decoding() -> None:
             '<html><head><meta name="description" content="A &copy; B">'
             "<title>T &copy;</title></head><body><p>X</p></body></html>",
             "---\nmeta-description: A &copy; B\ntitle: T &copy;\n---\n\n\nX\n",
+        ),
+        (
+            "<p>X&ensp;Y X&emsp;Y X&thinsp;Y X&zwnj;Y X&zwj;Y X&lrm;Y X&rlm;Y</p>",
+            "X Y X Y X Y X\u200cY X\u200dY X\u200eY X\u200fY\n",
+        ),
+        (
+            "<p>&Aacute; &aacute; &Eacute; &eacute; &Iacute; &iacute; "
+            "&Oacute; &oacute; &Uacute; &uacute; &Ntilde; &ntilde; "
+            "&Ccedil; &ccedil;</p>",
+            "Á á É é Í í Ó ó Ú ú Ñ ñ Ç ç\n",
+        ),
+        (
+            "<p>&aring; &auml; &ouml; &uuml; &yuml; &frac12; &frac14; "
+            "&frac34; &sup2; &sup3; &minus;</p>",
+            "å ä ö ü ÿ ½ ¼ ¾ ² ³ −\n",
+        ),
+        (
+            "<p>&permil; &dagger; &Dagger; &lsaquo; &rsaquo; &prime; "
+            "&Prime; &oline; &frasl;</p>",
+            "‰ † ‡ ‹ › ′ ″ ‾ ⁄\n",
+        ),
+        (
+            "<p>&spades; &clubs; &hearts; &diams; &loz; &harr; &larr; "
+            "&uarr; &darr;</p>",
+            "♠ ♣ ♥ ♦ ◊ ↔ ← ↑ ↓\n",
+        ),
+        (
+            "<p>&forall; &part; &exist; &empty; &nabla; &isin; &ni; &prod; &int;</p>",
+            "∀ ∂ ∃ ∅ ∇ ∈ ∋ ∏ ∫\n",
+        ),
+        (
+            "<p>&and; &or; &cap; &cup; &sub; &sup; &sube; &supe; "
+            "&oplus; &otimes; &perp; &sdot; &lceil; &rceil; "
+            "&lfloor; &rfloor; &lang; &rang;</p>",
+            "∧ ∨ ∩ ∪ ⊂ ⊃ ⊆ ⊇ ⊕ ⊗ ⊥ ⋅ ⌈ ⌉ ⌊ ⌋ ⟨ ⟩\n",
         ),
     ]
     for html, expected in cases:
@@ -254,6 +298,7 @@ def test_html_to_markdown_pre_edge_cases() -> None:
         ("<pre><span>A</span></pre>", "    A\n"),
         ("<pre>before <code>code</code> after</pre>", "    before code after\n"),
         ("<pre>A&nbsp;&amp;&copy;</pre>", "    A\xa0&©\n"),
+        ("<pre>&#65; &#X41; &#xD800;</pre>", "    A A &#xD800;\n"),
         ("<pre>a < b > c</pre>", "    a < b > c\n"),
     ]
     for html, expected in cases:
@@ -305,6 +350,10 @@ def test_html_to_markdown_mathml_edge_cases() -> None:
         (
             "<math><mtext>A&nbsp;&amp;&copy;</mtext></math>",
             "<!-- MathML: <math><mtext>A&nbsp;&amp;&copy;</mtext></math> --> A\xa0&©\n",
+        ),
+        (
+            "<math><mtext>&#65;&nbsp;&#X41;</mtext></math>",
+            "<!-- MathML: <math><mtext>&#65;&nbsp;&#X41;</mtext></math> --> A\xa0A\n",
         ),
         (
             '<math><annotation encoding="application/x-tex">x^2</annotation>'
@@ -359,6 +408,40 @@ def test_html_to_markdown_blockquote_edge_cases() -> None:
             "<blockquote><blockquote>Deep</blockquote></blockquote>",
             "> > Deep\n",
         ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_abbr_attribute_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        (
+            '<p><abbr title="HyperText Markup Language">HTML</abbr></p>',
+            "HTML (HyperText Markup Language)\n",
+        ),
+        ("<p><abbr title=>A</abbr></p>", "A\n"),
+        ("<p><abbr title>A</abbr></p>", "A\n"),
+        ('<p><abbr title="">A</abbr></p>', "A\n"),
+        ('<p><abbr TITLE="X">A</abbr></p>', "A\n"),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_case_sensitive_attribute_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        ('<ol start="3"><li>A</li></ol>', "3. A\n"),
+        ('<ol START="3"><li>A</li></ol>', "1. A\n"),
+        ('<ol start="0"><li>A</li><li>B</li></ol>', "0. A\n1. B\n"),
+        (
+            '<select><optgroup label="G"><option>A</option></optgroup></select>',
+            "**G**\nA\n",
+        ),
+        ('<select><optgroup LABEL="G"><option>A</option></optgroup></select>', "A\n"),
     ]
     for html, expected in cases:
         assert convert(html) == expected
