@@ -267,6 +267,35 @@ def test_html_to_markdown_named_entity_decoding() -> None:
             "&lArr; &uArr; &dArr; &hArr;</p>",
             "ℜ ℑ ℘ ℵ ↵ ⇒ ⇐ ⇑ ⇓ ⇔\n",
         ),
+        (
+            "<p>&Agrave; &agrave; &Acirc; &acirc; &Atilde; &atilde; "
+            "&AElig; &aelig; &Egrave; &egrave; &Ecirc; &ecirc; &Euml; &euml;</p>",
+            "À à Â â Ã ã Æ æ È è Ê ê Ë ë\n",
+        ),
+        (
+            "<p>&Igrave; &igrave; &Icirc; &icirc; &Iuml; &iuml; "
+            "&Ograve; &ograve; &Ocirc; &ocirc; &Otilde; &otilde; &Oslash; &oslash;</p>",
+            "Ì ì Î î Ï ï Ò ò Ô ô Õ õ Ø ø\n",
+        ),
+        (
+            "<p>&Ugrave; &ugrave; &Ucirc; &ucirc; &ETH; &eth; "
+            "&THORN; &thorn; &szlig; &divide; &times;</p>",
+            "Ù ù Û û Ð ð Þ þ ß ÷ ×\n",
+        ),
+        (
+            "<p>&iexcl; &iquest; &brvbar; &uml; &macr; &acute; &cedil; "
+            "&ordf; &ordm; &shy;</p>",
+            "¡ ¿ ¦ ¨ ¯ ´ ¸ ª º \xad\n",
+        ),
+        (
+            "<p>&curren; &euro; &fnof; &copy; &reg; &trade; &sect; &para;</p>",
+            "¤ € ƒ © ® ™ § ¶\n",
+        ),
+        (
+            "<p>&Chi; &chi; &Psi; &omega; &xi; &rho; &tau; &upsilon;</p>",
+            "Χ χ Ψ ω ξ ρ τ υ\n",
+        ),
+        ("<p>&thetasym; &upsih; &piv; &middot; &bull;</p>", "ϑ ϒ ϖ · •\n"),
     ]
     for html, expected in cases:
         assert convert(html) == expected
@@ -466,6 +495,29 @@ def test_html_to_markdown_case_sensitive_attribute_edge_cases() -> None:
         assert convert(html) == expected
 
 
+def test_html_to_markdown_attribute_name_boundary_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        ('<a data-href="x">L</a>', "L\n"),
+        ('<img data-src="x.png" alt="A">', "![A]()\n"),
+        ('<img data-title="T" src="x.png">', "![](x.png)\n"),
+        ('<ol data-start="3"><li>A</li></ol>', "1. A\n"),
+        (
+            '<select><optgroup data-label="G"><option>A</option></optgroup></select>',
+            "A\n",
+        ),
+        ('<abbr data-title="T">A</abbr>', "A\n"),
+        (
+            '<html><head><meta data-name="description" content="D">'
+            '<meta name="x" data-content="Y"><title>T</title></head><body>B</body></html>',
+            "---\ntitle: T\n---\nB\n",
+        ),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
 def test_html_to_markdown_definition_list_edge_cases() -> None:
     from html_to_markdown import convert
 
@@ -475,6 +527,23 @@ def test_html_to_markdown_definition_list_edge_cases() -> None:
         ("<dl><dt>A</dt><dd>B</dd><dt>C</dt><dd>D</dd></dl>", "A\n:   B\n\nC\n:   D\n"),
         ("<dl><dd>B</dd><dd>C</dd></dl>", "B\n\nC\n"),
         ("<p>X</p><dl><dt>A</dt><dd>B</dd></dl><p>Y</p>", "X\n\nA\n:   B\n\nY\n"),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_structural_inline_block_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        ("<dialog>A</dialog><dialog>B</dialog>", "A\n\nB\n"),
+        ("<p><dialog>A</dialog> B</p>", "A\n\nB\n"),
+        ("<summary>A</summary><summary>B</summary>", "**A**\n\n**B**\n"),
+        ("<p><summary>A</summary> B</p>", "**A**\n\nB\n"),
+        ("<details><summary>Sum</summary>Tail</details>", "**Sum**\n\nTail\n"),
+        ("<label>A</label><label>B</label>", "A\n\nB\n"),
+        ("<p><label>A</label> B</p>", "A\n\nB\n"),
+        ("<fieldset><legend>L</legend>Tail</fieldset>", "**L**\n\nTail\n"),
     ]
     for html, expected in cases:
         assert convert(html) == expected
