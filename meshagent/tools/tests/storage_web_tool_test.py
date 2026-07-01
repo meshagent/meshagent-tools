@@ -248,6 +248,25 @@ def test_html_to_markdown_named_entity_decoding() -> None:
             "&lfloor; &rfloor; &lang; &rang;</p>",
             "∧ ∨ ∩ ∪ ⊂ ⊃ ⊆ ⊇ ⊕ ⊗ ⊥ ⋅ ⌈ ⌉ ⌊ ⌋ ⟨ ⟩\n",
         ),
+        ("<p>&nbsp;&Tab;&NewLine;&ZeroWidthSpace;&NoBreak;</p>", " \u200b\u2060\n"),
+        (
+            "<p>&OElig; &oelig; &Scaron; &scaron; &Yuml; &circ; &tilde;</p>",
+            "Œ œ Š š Ÿ ˆ ˜\n",
+        ),
+        (
+            "<p>&Alpha; &Beta; &Gamma; &delta; &epsilon; &zeta; &eta; "
+            "&theta; &lambda; &pi; &sigma; &phi; &psi;</p>",
+            "Α Β Γ δ ε ζ η θ λ π σ φ ψ\n",
+        ),
+        (
+            "<p>&sim; &cong; &asymp; &equiv; &prop; &there4; &not; &ang;</p>",
+            "∼ ≅ ≈ ≡ ∝ ∴ ¬ ∠\n",
+        ),
+        (
+            "<p>&real; &image; &weierp; &alefsym; &crarr; &rArr; "
+            "&lArr; &uArr; &dArr; &hArr;</p>",
+            "ℜ ℑ ℘ ℵ ↵ ⇒ ⇐ ⇑ ⇓ ⇔\n",
+        ),
     ]
     for html, expected in cases:
         assert convert(html) == expected
@@ -442,6 +461,20 @@ def test_html_to_markdown_case_sensitive_attribute_edge_cases() -> None:
             "**G**\nA\n",
         ),
         ('<select><optgroup LABEL="G"><option>A</option></optgroup></select>', "A\n"),
+    ]
+    for html, expected in cases:
+        assert convert(html) == expected
+
+
+def test_html_to_markdown_definition_list_edge_cases() -> None:
+    from html_to_markdown import convert
+
+    cases = [
+        ("<dl><dt>A</dt><dd>B</dd></dl>", "A\n:   B\n"),
+        ("<dl><dt>A</dt><dt>B</dt><dd>C</dd></dl>", "A\nB\n:   C\n"),
+        ("<dl><dt>A</dt><dd>B</dd><dt>C</dt><dd>D</dd></dl>", "A\n:   B\n\nC\n:   D\n"),
+        ("<dl><dd>B</dd><dd>C</dd></dl>", "B\n\nC\n"),
+        ("<p>X</p><dl><dt>A</dt><dd>B</dd></dl><p>Y</p>", "X\n\nA\n:   B\n\nY\n"),
     ]
     for html, expected in cases:
         assert convert(html) == expected
