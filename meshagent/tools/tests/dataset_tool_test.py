@@ -341,7 +341,7 @@ def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> Non
         room=room,
         table="users",
         schema={"id": pa.int64(), "name": pa.string()},
-        prompt="{id:04d}|{score:.2f}|{score:08.2f}|{id:+d}|{id: d}|{neg:04d}|{id:x}|{id:#04x}|{id:b}|{id:o}|{id:X}|{score:e}|{name!r}|{nonascii!r}|{nonascii!a}|{none!s}|{{{name}}}|{name:8}|{name:>8}|{name:<8}|{name:^8}|{name:*^8}|{name:.3}|{name:s}|{name:>8s}|{flag!r}|{flag:d}|{flag:04d}|{flag:b}|{flag:x}|{flag:f}|{flag:>8}|{id:<8d}|{id:^8d}|{score:<8.2f}|{name:>{width}}|{score:.{precision}f}|{id:{int_spec}}|{name:{name_spec}}|{name:08}|{name!r:>10}|{flag!s:^6}|{score!r:.4}|{name!r:>{width}}|{id:{width!r}}|{big:,d}|{big:_d}|{big:,}|{big:_}|{id:=+6d}|{neg:=06d}|{id:*=+6d}|{id:*=#8x}|{score:g}|{score:.2g}|{score:G}|{small:.2g}|{bigfloat:.3g}|{score:%}|{score:.1%}|{score:08.1%}|{negscore:+08.1%}|{letter:c}|{letter:4c}|{letter:^5c}|{big:n}|{score:n}|{whole:#g}|{whole:#.2g}|{whole:#.0f}|{whole:#.0e}|{bigfloat:,.1f}|{bigfloat:_.1f}|{bigfloat:,.8g}|{bigfloat:_.8g}|{bigfloat:,%}",
+        prompt="{id:04d}|{score:.2f}|{score:08.2f}|{id:+d}|{id: d}|{neg:04d}|{id:x}|{id:#04x}|{id:b}|{id:o}|{id:X}|{score:e}|{huge}|{tiny}|{name!r}|{quote!r}|{control!r}|{nonascii!r}|{nonascii!a}|{none!s}|{{{name}}}|{name:8}|{name:>8}|{name:<8}|{name:^8}|{name:*^8}|{name:.3}|{name:s}|{name:>8s}|{flag!r}|{flag:d}|{flag:04d}|{flag:b}|{flag:x}|{flag:f}|{flag:>8}|{id:<8d}|{id:^8d}|{score:<8.2f}|{name:>{width}}|{score:.{precision}f}|{id:{int_spec}}|{name:{name_spec}}|{name:08}|{name!r:>10}|{flag!s:^6}|{score!r:.4}|{name!r:>{width}}|{id:{width!r}}|{big:,d}|{big:_d}|{big:,}|{big:_}|{id:=+6d}|{neg:=06d}|{id:*=+6d}|{id:*=#8x}|{score:g}|{score:.2g}|{score:G}|{small:.2g}|{bigfloat:.3g}|{score:%}|{score:.1%}|{score:08.1%}|{negscore:+08.1%}|{letter:c}|{letter:4c}|{letter:^5c}|{big:n}|{score:n}|{whole:#g}|{whole:#.2g}|{whole:#.0f}|{whole:#.0e}|{bigfloat:,.1f}|{bigfloat:_.1f}|{bigfloat:,.8g}|{bigfloat:_.8g}|{bigfloat:,%}",
         queue="jobs",
         namespace=["prod"],
     )
@@ -351,8 +351,12 @@ def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> Non
         row={
             "id": 7,
             "name": "Alice",
+            "quote": "it's",
+            "control": "\x07",
             "nonascii": "é",
             "score": 3.14159,
+            "huge": 1e20,
+            "tiny": 1e-7,
             "flag": True,
             "none": None,
             "neg": -7,
@@ -368,12 +372,16 @@ def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> Non
             "name_spec": "*^8",
         },
     ) == {
-        "prompt": "0007|3.14|00003.14|+7| 7|-007|7|0x07|111|7|7|3.141590e+00|'Alice'|'é'|'\\xe9'|None|{Alice}|Alice   |   Alice|Alice   | Alice  |*Alice**|Ali|Alice|   Alice|True|1|0001|1|1|1.000000|       1|7       |   7    |3.14    |   Alice|3.142|0007|*Alice**|Alice000|   'Alice'| True |3.14| 'Alice'|       7|1,234,567|1_234_567|1,234,567|1_234_567|+    7|-00007|+****7|0x*****7|3.14159|3.1|3.14159|0.00012|1.23e+06|314.159000%|314.2%|00314.2%|-0314.2%|A|   A|  A  |1234567|3.14159|3.00000|3.0|3.|3.e+00|1,234,567.0|1_234_567.0|1,234,567|1_234_567|123,456,700.000000%",
+        "prompt": "0007|3.14|00003.14|+7| 7|-007|7|0x07|111|7|7|3.141590e+00|1e+20|1e-07|'Alice'|\"it's\"|'\\x07'|'é'|'\\xe9'|None|{Alice}|Alice   |   Alice|Alice   | Alice  |*Alice**|Ali|Alice|   Alice|True|1|0001|1|1|1.000000|       1|7       |   7    |3.14    |   Alice|3.142|0007|*Alice**|Alice000|   'Alice'| True |3.14| 'Alice'|       7|1,234,567|1_234_567|1,234,567|1_234_567|+    7|-00007|+****7|0x*****7|3.14159|3.1|3.14159|0.00012|1.23e+06|314.159000%|314.2%|00314.2%|-0314.2%|A|   A|  A  |1234567|3.14159|3.00000|3.0|3.|3.e+00|1,234,567.0|1_234_567.0|1,234,567|1_234_567|123,456,700.000000%",
         "row": {
             "id": 7,
             "name": "Alice",
+            "quote": "it's",
+            "control": "\x07",
             "nonascii": "é",
             "score": 3.14159,
+            "huge": 1e20,
+            "tiny": 1e-7,
             "flag": True,
             "none": None,
             "neg": -7,
@@ -411,6 +419,84 @@ def test_spawn_task_for_each_row_prompt_format_numeric_attributes() -> None:
     }
 
 
+def test_spawn_task_for_each_row_prompt_format_dict_keys_are_literal() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64()},
+        prompt="{user[score]}|{user['score']}|{user[\"score\"]}",
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={"user": {"score": 12, "'score'": 13, '"score"': 14}},
+    ) == {
+        "prompt": "12|13|14",
+        "row": {"user": {"score": 12, "'score'": 13, '"score"': 14}},
+    }
+
+
+def test_spawn_task_for_each_row_prompt_format_repr_escapes_non_printing_unicode() -> (
+    None
+):
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64()},
+        prompt="{nbsp!r}|{line_sep!r}|{zero_width!r}|{emoji!r}|{nbsp!a}|{emoji!a}",
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={
+            "nbsp": "\u00a0",
+            "line_sep": "\u2028",
+            "zero_width": "\u200b",
+            "emoji": "😀",
+        },
+    ) == {
+        "prompt": "'\\xa0'|'\\u2028'|'\\u200b'|'😀'|'\\xa0'|'\\U0001f600'",
+        "row": {
+            "nbsp": "\u00a0",
+            "line_sep": "\u2028",
+            "zero_width": "\u200b",
+            "emoji": "😀",
+        },
+    }
+
+
+def test_spawn_task_for_each_row_prompt_format_collection_repr_matches_python() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"id": pa.int64()},
+        prompt="{obj}|{arr}",
+        queue="jobs",
+        namespace=["prod"],
+    )
+
+    assert tool.make_message(
+        context=_tool_context(room),
+        row={
+            "obj": {"b": 1, "a": 2, "it's": "it's", "huge": 1e20},
+            "arr": ["it's", "\u2028", 1e-7],
+        },
+    ) == {
+        "prompt": "{'b': 1, 'a': 2, \"it's\": \"it's\", 'huge': 1e+20}|[\"it's\", '\\u2028', 1e-07]",
+        "row": {
+            "obj": {"b": 1, "a": 2, "it's": "it's", "huge": 1e20},
+            "arr": ["it's", "\u2028", 1e-7],
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("prompt", "error_type", "message"),
     [
@@ -426,6 +512,15 @@ def test_spawn_task_for_each_row_prompt_format_numeric_attributes() -> None:
         ),
         ("{id.real[0]}", TypeError, "'int' object is not subscriptable"),
         ("{name.real}", AttributeError, "'str' object has no attribute 'real'"),
+        (
+            "{user[name]suffix}",
+            ValueError,
+            "Only '.' or '\\[' may follow '\\]' in format field specifier",
+        ),
+        ("{user[}", ValueError, "expected '\\}' before end of string"),
+        ("{user[]}", ValueError, "Empty attribute in format string"),
+        ("{user.}", ValueError, "Empty attribute in format string"),
+        ("{user..name}", ValueError, "Empty attribute in format string"),
     ],
 )
 def test_spawn_task_for_each_row_prompt_format_attribute_errors_match_python(
@@ -446,7 +541,7 @@ def test_spawn_task_for_each_row_prompt_format_attribute_errors_match_python(
     with pytest.raises(error_type, match=message):
         tool.make_message(
             context=_tool_context(room),
-            row={"id": 7, "score": 3.14159, "name": "Alice"},
+            row={"id": 7, "score": 3.14159, "name": "Alice", "user": {"name": 1}},
         )
 
 
@@ -460,8 +555,9 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
             "created_at": pa.timestamp("us", tz="UTC"),
             "price": pa.decimal128(12, 4),
             "payload": pa.binary(),
+            "quote_payload": pa.binary(),
         },
-        prompt="{event_date}|{event_date!r}|{event_date.year:04d}-{event_date.month:02d}-{event_date.day:02d}|{event_date:%a|%A|%b|%B|%j|%w|%u|%U|%W|%I|%p|%y|%x|%X}|{created_at}|{created_at!r}|{created_at.year:04d}-{created_at.month:02d}-{created_at.day:02d}T{created_at.hour:02d}:{created_at.minute:02d}:{created_at.second:02d}.{created_at.microsecond:06d}|{created_at.tzinfo}|{created_at.tzinfo!r}|{created_at.tzinfo.zone}|{created_at.fold}|{created_at:%Y/%m/%d %H:%M:%S.%f %z %Z|%a|%b|%j|%I|%p}|{price}|{price!r}|{price:f}|{price:.2f}|{price:,f}|{price:,.2f}|{price:+012.2f}|{price:n}|{payload}|{payload!r}",
+        prompt="{event_date}|{event_date!r}|{event_date.year:04d}-{event_date.month:02d}-{event_date.day:02d}|{event_date:%a|%A|%b|%B|%j|%w|%u|%U|%W|%I|%p|%y|%x|%X}|{created_at}|{created_at!r}|{created_at.year:04d}-{created_at.month:02d}-{created_at.day:02d}T{created_at.hour:02d}:{created_at.minute:02d}:{created_at.second:02d}.{created_at.microsecond:06d}|{created_at.tzinfo}|{created_at.tzinfo!r}|{created_at.tzinfo.zone}|{created_at.fold}|{created_at:%Y/%m/%d %H:%M:%S.%f %z %Z|%a|%b|%j|%I|%p}|{price}|{price!r}|{price:f}|{price:.2f}|{price:,f}|{price:,.2f}|{price:+012.2f}|{price:n}|{payload}|{payload!r}|{quote_payload}",
         queue="jobs",
     )
     row = pa.Table.from_pylist(
@@ -473,6 +569,7 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
                 ),
                 "price": Decimal("1234.5600"),
                 "payload": b"\x00\x01\xfa\xff",
+                "quote_payload": b"a'b",
             }
         ],
         schema=pa.schema(
@@ -481,12 +578,13 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
                 pa.field("created_at", pa.timestamp("us", tz="UTC")),
                 pa.field("price", pa.decimal128(12, 4)),
                 pa.field("payload", pa.binary()),
+                pa.field("quote_payload", pa.binary()),
             ]
         ),
     ).to_pylist()[0]
 
     assert tool.make_message(context=_tool_context(room), row=row) == {
-        "prompt": "2026-04-09|datetime.date(2026, 4, 9)|2026-04-09|Thu|Thursday|Apr|April|099|4|4|14|14|12|AM|26|04/09/26|00:00:00|2026-04-09 12:30:45.123456+00:00|datetime.datetime(2026, 4, 9, 12, 30, 45, 123456, tzinfo=<UTC>)|2026-04-09T12:30:45.123456|UTC|<UTC>|UTC|0|2026/04/09 12:30:45.123456 +0000 UTC|Thu|Apr|099|12|PM|1234.5600|Decimal('1234.5600')|1234.5600|1234.56|1,234.5600|1,234.56|+00001234.56|1234.5600|b'\\x00\\x01\\xfa\\xff'|b'\\x00\\x01\\xfa\\xff'",
+        "prompt": "2026-04-09|datetime.date(2026, 4, 9)|2026-04-09|Thu|Thursday|Apr|April|099|4|4|14|14|12|AM|26|04/09/26|00:00:00|2026-04-09 12:30:45.123456+00:00|datetime.datetime(2026, 4, 9, 12, 30, 45, 123456, tzinfo=<UTC>)|2026-04-09T12:30:45.123456|UTC|<UTC>|UTC|0|2026/04/09 12:30:45.123456 +0000 UTC|Thu|Apr|099|12|PM|1234.5600|Decimal('1234.5600')|1234.5600|1234.56|1,234.5600|1,234.56|+00001234.56|1234.5600|b'\\x00\\x01\\xfa\\xff'|b'\\x00\\x01\\xfa\\xff'|b\"a'b\"",
         "row": row,
     }
     packed = pack_message(
@@ -502,6 +600,7 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
         "created_at": "2026-04-09 12:30:45.123456+00:00",
         "price": "1234.5600",
         "payload": "b'\\x00\\x01\\xfa\\xff'",
+        "quote_payload": 'b"a\'b"',
     }
 
 
@@ -788,6 +887,7 @@ def test_spawn_task_for_each_row_prompt_format_positional_fields_use_python_erro
         ("{id!s:04d}", "Unknown format code 'd' for object of type 'str'"),
         ("{name!z}", "Unknown conversion specifier z"),
         ("{name!rr}", "expected ':' after conversion specifier"),
+        ("{!}", "unmatched '\\{' in format spec"),
     ],
 )
 def test_spawn_task_for_each_row_prompt_format_conversion_errors_match_python(
@@ -836,6 +936,16 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_match_python_limit()
             "{none:>8}",
             TypeError,
             "unsupported format string passed to NoneType.__format__",
+        ),
+        (
+            "{user:>8}",
+            TypeError,
+            "unsupported format string passed to dict.__format__",
+        ),
+        (
+            "{items:>8}",
+            TypeError,
+            "unsupported format string passed to list.__format__",
         ),
         (
             "{name:=8}",
@@ -898,6 +1008,8 @@ def test_spawn_task_for_each_row_prompt_format_numeric_errors_match_python(
                 "none": None,
                 "flag": True,
                 "big": 1234567,
+                "user": {"name": "Alice"},
+                "items": [1, 2],
             },
         )
 
