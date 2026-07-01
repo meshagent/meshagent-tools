@@ -669,6 +669,108 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
         "quote_payload": 'b"a\'b"',
     }
 
+    attr_tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={
+            "event_date": pa.date32(),
+            "created_at": pa.timestamp("us", tz="UTC"),
+            "price": pa.decimal128(12, 4),
+            "payload": pa.binary(),
+            "quote_payload": pa.binary(),
+        },
+        prompt="{price.real}|{price.imag}|{payload[0]}|{quote_payload[1]}|{event_date.max}|{event_date.min}|{event_date.resolution}|{created_at.max}|{created_at.min}|{created_at.resolution}",
+        queue="jobs",
+    )
+
+    assert attr_tool.make_message(context=_tool_context(room), row=row)["prompt"] == (
+        "1234.5600|0|0|39|9999-12-31|0001-01-01|1 day, 0:00:00|"
+        "9999-12-31 23:59:59.999999|0001-01-01 00:00:00|0:00:00.000001"
+    )
+
+
+@pytest.mark.parametrize(
+    ("prompt", "error_type", "message"),
+    [
+        ("{price[0]}", TypeError, "'decimal\\.Decimal' object is not subscriptable"),
+        (
+            "{price.foo}",
+            AttributeError,
+            "'decimal\\.Decimal' object has no attribute 'foo'",
+        ),
+        ("{payload[-1]}", TypeError, "byte indices must be integers or slices"),
+        ("{payload[3]}", IndexError, "index out of range"),
+        ("{payload.foo}", AttributeError, "'bytes' object has no attribute 'foo'"),
+        (
+            "{event_date[0]}",
+            TypeError,
+            "'datetime\\.date' object is not subscriptable",
+        ),
+        (
+            "{event_date.foo}",
+            AttributeError,
+            "'datetime\\.date' object has no attribute 'foo'",
+        ),
+        (
+            "{created_at[0]}",
+            TypeError,
+            "'datetime\\.datetime' object is not subscriptable",
+        ),
+        (
+            "{created_at.foo}",
+            AttributeError,
+            "'datetime\\.datetime' object has no attribute 'foo'",
+        ),
+        ("{created_at.tzinfo[0]}", TypeError, "'UTC' object is not subscriptable"),
+        (
+            "{created_at.tzinfo.key}",
+            AttributeError,
+            "'UTC' object has no attribute 'key'",
+        ),
+    ],
+)
+def test_spawn_task_for_each_row_prompt_format_pyarrow_scalar_attribute_errors(
+    prompt: str,
+    error_type: type[Exception],
+    message: str,
+) -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="events",
+        schema={
+            "event_date": pa.date32(),
+            "created_at": pa.timestamp("us", tz="UTC"),
+            "price": pa.decimal128(12, 4),
+            "payload": pa.binary(),
+        },
+        prompt=prompt,
+        queue="jobs",
+    )
+    row = pa.Table.from_pylist(
+        [
+            {
+                "event_date": date(2026, 4, 9),
+                "created_at": datetime(
+                    2026, 4, 9, 12, 30, 45, 123456, tzinfo=timezone.utc
+                ),
+                "price": Decimal("1234.5600"),
+                "payload": b"abc",
+            }
+        ],
+        schema=pa.schema(
+            [
+                pa.field("event_date", pa.date32()),
+                pa.field("created_at", pa.timestamp("us", tz="UTC")),
+                pa.field("price", pa.decimal128(12, 4)),
+                pa.field("payload", pa.binary()),
+            ]
+        ),
+    ).to_pylist()[0]
+
+    with pytest.raises(error_type, match=message):
+        tool.make_message(context=_tool_context(room), row=row)
+
 
 def test_spawn_task_for_each_row_prompt_format_date_strftime_extra_directives() -> None:
     room = _FakeRoom()
@@ -812,6 +914,15 @@ def test_spawn_task_for_each_row_prompt_format_date_strftime_extra_directives() 
         ("1", "#n", "1."),
         ("10.00", "#.3n", "10.0"),
         ("1234.5600", "*=+12.3n", "+****1.23e+3"),
+        ("3.1400", ".3", "3.14"),
+        ("3.1400", "08.3", "00003.14"),
+        ("1234567.0", ".3", "1.23E+6"),
+        ("1234567.0", "08.3", "01.23E+6"),
+        ("1E+20", "#.2", "1.0E+20"),
+        ("1E+20", "08,.3", "1.00E+20"),
+        ("1E-7", "#.2", "1.E-7"),
+        ("1E-7", "08,.3", "0,001E-7"),
+        ("-0.0000", "z08,.2", "000.0000"),
         ("1234.56", "=+12.2f", "+    1234.56"),
         ("-1234.56", "=+12.2f", "-    1234.56"),
         ("1234.56", "*=+12.2f", "+****1234.56"),
@@ -951,7 +1062,17 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python(
         room=room,
         table="users",
         schema={"id": pa.int64()},
-        prompt="{id:{fill}{align}{width}d}|{score:{spec}}|{id:0{width}d}|{id:{align}{width}d}",
+        prompt=(
+            "{id:{fill}{align}{width}d}|{score:{spec}}|"
+            "{id:0{width}d}|{id:{align}{width}d}|"
+            "{id:{zero}{width}d}|{id:{zero}>{width}d}|"
+            "{id:{zero}={width},d}|{id:{sign}{zero}{width}d}|"
+            "{id:{hash}{zero}{width}x}|{id:{spec_obj[x]}}|"
+            "{id:{spec_list[0]}}|{score:{zero}{width}.{precision}f}|"
+            "{score:{zero}{width}{comma}.{precision}f}|"
+            "{score:{zero}={width}{comma}.{precision}f}|"
+            "{score:{width}.{precision}}|{score:{width}.{precision}g}"
+        ),
         queue="jobs",
     )
 
@@ -963,17 +1084,35 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python(
             "fill": "*",
             "align": ">",
             "width": 8,
+            "precision": 3,
             "spec": ".2f",
+            "zero": "0",
+            "sign": "+",
+            "hash": "#",
+            "comma": ",",
+            "spec_obj": {"x": "04d"},
+            "spec_list": ["04d"],
         },
     ) == {
-        "prompt": "*******7|3.14|00000007|       7",
+        "prompt": (
+            "*******7|3.14|00000007|       7|00000007|00000007|"
+            "0,000,007|+0000007|0x000007|0007|0007|0003.142|"
+            "0,003.142|0,003.142|    3.14|    3.14"
+        ),
         "row": {
             "id": 7,
             "score": 3.14159,
             "fill": "*",
             "align": ">",
             "width": 8,
+            "precision": 3,
             "spec": ".2f",
+            "zero": "0",
+            "sign": "+",
+            "hash": "#",
+            "comma": ",",
+            "spec_obj": {"x": "04d"},
+            "spec_list": ["04d"],
         },
     }
 
