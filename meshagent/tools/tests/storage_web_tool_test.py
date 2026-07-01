@@ -17,6 +17,62 @@ import meshagent.tools.web_toolkit as web_toolkit
 import meshagent.tools.storage as storage_toolkit
 
 
+def test_web_infer_filename_uses_python_mimetypes_fallbacks() -> None:
+    cases = [
+        ("application/pdf", "downloaded-content.pdf"),
+        ("image/png", "downloaded-content.png"),
+        ("image/jpeg", "downloaded-content.jpg"),
+        ("image/gif", "downloaded-content.gif"),
+        ("image/webp", "downloaded-content.webp"),
+        ("image/bmp", "downloaded-content.bmp"),
+        ("image/tiff", "downloaded-content.tiff"),
+        ("image/svg+xml", "downloaded-content.svg"),
+        ("image/avif", "downloaded-content.avif"),
+        ("image/heic", "downloaded-content.heic"),
+        ("image/heif", "downloaded-content.heif"),
+        ("text/plain", "downloaded-content.txt"),
+        ("text/html", "downloaded-content.html"),
+        ("application/json", "downloaded-content.json"),
+        ("application/xhtml+xml", "downloaded-content.xhtml"),
+        ("application/octet-stream", "downloaded-content.bin"),
+        ("application/x-tar", "downloaded-content.tar"),
+        ("application/zip", "downloaded-content.zip"),
+        ("", "downloaded-content"),
+    ]
+    for content_type, expected in cases:
+        assert (
+            web_toolkit._infer_filename(
+                url="https://example.com/download/",
+                content_type=content_type,
+            )
+            == expected
+        )
+
+
+def test_web_url_extension_matches_python_splitext_hidden_files() -> None:
+    assert web_toolkit._url_extension("https://example.com/.json") == ""
+    assert web_toolkit._url_extension("https://example.com/..json") == ""
+    assert web_toolkit._url_extension("https://example.com/.a.json") == ".json"
+    assert web_toolkit._url_extension("https://example.com/file.") == "."
+
+    assert not web_toolkit._is_text_like_url(
+        url="https://example.com/.json",
+        content_type="application/octet-stream",
+    )
+    assert not web_toolkit._is_pdf_or_image_url(
+        url="https://example.com/.pdf",
+        content_type="",
+    )
+    assert web_toolkit._is_text_like_url(
+        url="https://example.com/.a.json",
+        content_type="application/octet-stream",
+    )
+    assert web_toolkit._is_pdf_or_image_url(
+        url="https://example.com/.a.pdf",
+        content_type="",
+    )
+
+
 class _FakeResponse:
     def __init__(
         self,
@@ -308,6 +364,65 @@ async def test_grep_file_uses_offset(tmp_path) -> None:
     )
 
 
+def test_grep_text_uses_python_splitlines_boundaries() -> None:
+    text = "zero\rtarget one\x0bmid\x1ctarget two\x85tail\u2028last"
+
+    assert grep_text(text=text, pattern="target", before=1, after=1) == (
+        "1- zero\n2: target one\n3- mid\n4: target two\n5- tail"
+    )
+
+
+def test_grep_text_supports_python_lookaround_patterns() -> None:
+    text = "one target\ntwo target\ntargetx\nTARGET\naxxxb\n"
+
+    assert grep_text(text=text, pattern="(?=target)target") == (
+        "1: one target\n2: two target\n3: targetx"
+    )
+    assert grep_text(text=text, pattern="(?<=two )target") == "2: two target"
+    assert grep_text(text=text, pattern="target(?!x)") == (
+        "1: one target\n2: two target"
+    )
+    assert grep_text(text=text, pattern="(?i)target") == (
+        "1: one target\n2: two target\n3: targetx\n4: TARGET"
+    )
+    assert grep_text(text=text, pattern="(?m)^target") == "3: targetx"
+    assert grep_text(text=text, pattern="(?s)a.*b") == "5: axxxb"
+    assert grep_text(text=text, pattern="(?P<name>target)") == (
+        "1: one target\n2: two target\n3: targetx"
+    )
+
+
+def test_grep_text_supports_python_backreference_patterns() -> None:
+    text = "foo foo\nfoo bar\n123-123\nword WORD\n"
+
+    assert grep_text(text=text, pattern=r"(\w+) \1") == "1: foo foo"
+    assert grep_text(text=text, pattern=r"(\d+)-(\1)") == "3: 123-123"
+    assert grep_text(text=text, pattern=r"(?i)(word) \1") == "4: word WORD"
+    assert grep_text(text=text, pattern=r"(?P<x>foo) (?P=x)") == "1: foo foo"
+
+
+def test_grep_text_invalid_regex_errors_match_python() -> None:
+    cases = [
+        (
+            "[",
+            "invalid regular expression pattern: unterminated character set at position 0",
+        ),
+        ("\\p{L}", "invalid regular expression pattern: bad escape \\p at position 0"),
+        (
+            "(?P<x>a)(?P<x>b)",
+            "invalid regular expression pattern: redefinition of group name 'x' as group 2; was group 1 at position 12",
+        ),
+        (
+            "(?<bad>target",
+            "invalid regular expression pattern: unknown extension ?<b at position 1",
+        ),
+    ]
+    for pattern, expected in cases:
+        with pytest.raises(RoomException) as exc_info:
+            grep_text(text="target\n", pattern=pattern)
+        assert str(exc_info.value) == expected
+
+
 @pytest.mark.asyncio
 async def test_room_mount_write_file_uses_room_storage_upload() -> None:
     room = _FakeRoom()
@@ -515,6 +630,242 @@ async def test_web_fetch_supports_offset_and_truncation(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_and_grep_decode_response_charset(monkeypatch) -> None:
+    body = "café\nnaïve target\n"
+    fake_response = _FakeResponse(
+        data=body.encode("latin-1"),
+        content_type="text/plain",
+        charset="latin-1",
+    )
+    monkeypatch.setattr(
+        web_toolkit, "new_client_session", lambda: _FakeSession(fake_response)
+    )
+
+    toolkit = WebToolkit(max_length=500)
+    fetch_result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_fetch",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/latin1.txt",
+                "offset": 0,
+            }
+        ),
+    )
+    grep_result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_grep",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/latin1.txt",
+                "pattern": "naïve",
+                "offset": 0,
+                "before": 1,
+                "after": None,
+            }
+        ),
+    )
+
+    assert isinstance(fetch_result, TextContent)
+    assert fetch_result.text == body
+    assert isinstance(grep_result, TextContent)
+    assert grep_result.text == grep_text(
+        text=body,
+        pattern="naïve",
+        start_line=1,
+        before=1,
+        after=0,
+    )
+
+    for charset in ("cp1252", "iso8859_1"):
+        alias_response = _FakeResponse(
+            data="café\n".encode(charset),
+            content_type="text/plain",
+            charset=charset,
+        )
+        monkeypatch.setattr(
+            web_toolkit, "new_client_session", lambda: _FakeSession(alias_response)
+        )
+        alias_result = await toolkit.execute(
+            context=_tool_context(),
+            name="web_fetch",
+            input=JsonContent(
+                json={
+                    "url": f"https://example.com/{charset}.txt",
+                    "offset": 0,
+                }
+            ),
+        )
+        assert isinstance(alias_result, TextContent)
+        assert alias_result.text == "café\n"
+
+    for charset in ("ascii", "us-ascii"):
+        ascii_response = _FakeResponse(
+            data=b"caf\xe9\n",
+            content_type="text/plain",
+            charset=charset,
+        )
+        monkeypatch.setattr(
+            web_toolkit, "new_client_session", lambda: _FakeSession(ascii_response)
+        )
+        ascii_result = await toolkit.execute(
+            context=_tool_context(),
+            name="web_fetch",
+            input=JsonContent(
+                json={
+                    "url": f"https://example.com/{charset}.txt",
+                    "offset": 0,
+                }
+            ),
+        )
+        assert isinstance(ascii_result, TextContent)
+        assert ascii_result.text == "caf�\n"
+
+    for charset, data in (
+        ("utf-16", "café\n".encode("utf-16")),
+        ("utf-16le", "café\n".encode("utf-16le")),
+        ("utf-16be", "café\n".encode("utf-16be")),
+        ("utf_16", "café\n".encode("utf-16")),
+        ("utf_16_le", "café\n".encode("utf-16le")),
+        ("utf_16_be", "café\n".encode("utf-16be")),
+    ):
+        utf16_response = _FakeResponse(
+            data=data,
+            content_type="text/plain",
+            charset=charset,
+        )
+        monkeypatch.setattr(
+            web_toolkit, "new_client_session", lambda: _FakeSession(utf16_response)
+        )
+        utf16_result = await toolkit.execute(
+            context=_tool_context(),
+            name="web_fetch",
+            input=JsonContent(
+                json={
+                    "url": f"https://example.com/{charset}.txt",
+                    "offset": 0,
+                }
+            ),
+        )
+        assert isinstance(utf16_result, TextContent)
+        assert utf16_result.text == "café\n"
+
+    odd_utf16_response = _FakeResponse(
+        data=b"\xff",
+        content_type="text/plain",
+        charset="utf-16",
+    )
+    monkeypatch.setattr(
+        web_toolkit, "new_client_session", lambda: _FakeSession(odd_utf16_response)
+    )
+    odd_utf16_result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_fetch",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/odd-utf16.txt",
+                "offset": 0,
+            }
+        ),
+    )
+    assert isinstance(odd_utf16_result, TextContent)
+    assert odd_utf16_result.text == "�"
+
+
+@pytest.mark.asyncio
+async def test_web_tools_direct_execute_stringifies_url_and_pattern(
+    monkeypatch,
+) -> None:
+    fake_response = _FakeResponse(
+        data=b"123 target\n",
+        content_type="text/plain",
+        charset="utf-8",
+    )
+    fake_session = _FakeSession(fake_response)
+    monkeypatch.setattr(web_toolkit, "new_client_session", lambda: fake_session)
+
+    toolkit = WebToolkit(max_length=500)
+    web_fetch = toolkit.get_tool("web_fetch")
+    web_grep = toolkit.get_tool("web_grep")
+
+    fetch_result = await web_fetch.execute(
+        _tool_context(),
+        url=123,
+        offset=0,
+    )
+    grep_result = await web_grep.execute(
+        _tool_context(),
+        url=123,
+        pattern=123,
+        offset=0,
+        before=None,
+        after=None,
+    )
+
+    assert fake_session.requested_url == "123"
+    assert isinstance(fetch_result, TextContent)
+    assert fetch_result.text == "123 target\n"
+    assert isinstance(grep_result, TextContent)
+    assert grep_result.text == "1: 123 target"
+
+
+@pytest.mark.asyncio
+async def test_web_tools_empty_user_agent_falls_back_to_meshagent(monkeypatch) -> None:
+    fake_response = _FakeResponse(
+        data=b"ok\n",
+        content_type="text/plain",
+        charset="utf-8",
+    )
+    fetch_session = _FakeSession(fake_response)
+    monkeypatch.setattr(web_toolkit, "new_client_session", lambda: fetch_session)
+
+    toolkit = WebToolkit(user_agent="", max_length=500)
+    await toolkit.execute(
+        context=_tool_context(),
+        name="web_fetch",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/fetch.txt",
+                "offset": 0,
+            }
+        ),
+    )
+    assert fetch_session.requested_headers == {"User-Agent": "Meshagent"}
+
+    grep_session = _FakeSession(fake_response)
+    monkeypatch.setattr(web_toolkit, "new_client_session", lambda: grep_session)
+    await toolkit.execute(
+        context=_tool_context(),
+        name="web_grep",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/grep.txt",
+                "pattern": "ok",
+                "offset": 0,
+                "before": None,
+                "after": None,
+            }
+        ),
+    )
+    assert grep_session.requested_headers == {"User-Agent": "Meshagent"}
+
+    custom_session = _FakeSession(fake_response)
+    monkeypatch.setattr(web_toolkit, "new_client_session", lambda: custom_session)
+    custom_toolkit = WebToolkit(user_agent="custom-agent", max_length=500)
+    await custom_toolkit.execute(
+        context=_tool_context(),
+        name="web_fetch",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/custom.txt",
+                "offset": 0,
+            }
+        ),
+    )
+    assert custom_session.requested_headers == {"User-Agent": "custom-agent"}
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_returns_pdf_file_content(monkeypatch) -> None:
     data = b"%PDF-1.7\n\x00\x01\x02binary"
     fake_response = _FakeResponse(
@@ -597,6 +948,50 @@ async def test_web_fetch_treats_yaml_as_text_when_content_type_is_octet_stream(
 
     assert isinstance(result, TextContent)
     assert result.text == body
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_and_grep_pretty_json_preserve_non_ascii(monkeypatch) -> None:
+    body = '["café","😀","a\\nb"]'
+    expected = '[\n  "café",\n  "😀",\n  "a\\nb"\n]'
+    fake_response = _FakeResponse(
+        data=body.encode("utf-8"),
+        content_type="application/json",
+        charset="utf-8",
+    )
+    monkeypatch.setattr(
+        web_toolkit, "new_client_session", lambda: _FakeSession(fake_response)
+    )
+
+    toolkit = WebToolkit(max_length=500)
+    fetch_result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_fetch",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/data.json",
+                "offset": 0,
+            }
+        ),
+    )
+    grep_result = await toolkit.execute(
+        context=_tool_context(),
+        name="web_grep",
+        input=JsonContent(
+            json={
+                "url": "https://example.com/data.json",
+                "pattern": "café",
+                "offset": 0,
+                "before": 1,
+                "after": 1,
+            }
+        ),
+    )
+
+    assert isinstance(fetch_result, TextContent)
+    assert fetch_result.text == expected
+    assert isinstance(grep_result, TextContent)
+    assert grep_result.text == '1- [\n2:   "café",\n3-   "😀",'
 
 
 @pytest.mark.asyncio
