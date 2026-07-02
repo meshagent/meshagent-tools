@@ -542,13 +542,24 @@ def test_html_to_markdown_structural_inline_block_edge_cases() -> None:
     from html_to_markdown import convert
 
     cases = [
+        ("<article>Article</article><section>Section</section>", "ArticleSection\n"),
         ("<dialog>A</dialog><dialog>B</dialog>", "A\n\nB\n"),
         ("<p><dialog>A</dialog> B</p>", "A\n\nB\n"),
         ("<summary>A</summary><summary>B</summary>", "**A**\n\n**B**\n"),
         ("<p><summary>A</summary> B</p>", "**A**\n\nB\n"),
         ("<details><summary>Sum</summary>Tail</details>", "**Sum**\n\nTail\n"),
+        ("<hgroup><h1>A</h1><p>B</p></hgroup>", "# A\n\nB\n"),
+        (
+            '<figure><img src="x.png" alt="Alt"><figcaption>Cap</figcaption></figure>',
+            "![Alt](x.png)Cap\n",
+        ),
+        ("<figure><figcaption>Cap</figcaption></figure>", "Cap\n"),
+        ("<select><option>A</option><option>B</option></select>", "A\nB\n"),
         ("<label>A</label><label>B</label>", "A\n\nB\n"),
         ("<p><label>A</label> B</p>", "A\n\nB\n"),
+        ("<button>Click</button><p>Next</p>", "Click\n\nNext\n"),
+        ("<output>42</output><p>Next</p>", "42\n\nNext\n"),
+        ("<template><p>Hidden</p></template><p>Shown</p>", "Hidden\n\nShown\n"),
         ("<fieldset><legend>L</legend>Tail</fieldset>", "**L**\n\nTail\n"),
     ]
     for html, expected in cases:
