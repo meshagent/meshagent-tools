@@ -2,7 +2,7 @@ import pytest
 from jsonschema import ValidationError as JsonSchemaValidationError
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -126,6 +126,28 @@ class _TuplePayload(BaseModel):
     variadic: tuple[int, ...]
 
 
+class _AliasPayload(BaseModel):
+    count_value: int = Field(alias="countValue")
+
+
+class _PopulateByNamePayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    count_value: int = Field(alias="countValue")
+
+
+class _PopulateByNameForbidPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    count_value: int = Field(alias="countValue")
+
+
+class _PopulateByNameAllowPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    count_value: int = Field(alias="countValue")
+
+
 class _ConstrainedPayload(BaseModel):
     count: Annotated[int, Field(ge=1, le=5)]
     ratio: Annotated[float, Field(gt=0, lt=2)]
@@ -160,6 +182,15 @@ class _DefaultPayload(BaseModel):
     count: int = 3
     enabled: bool = True
     label: str = "alpha"
+    made: list[int] = Field(default_factory=lambda: [1, 2])
+
+
+class _UnvalidatedDefaultPayload(BaseModel):
+    count: int = "3"
+
+
+class _ValidateDefaultPayload(BaseModel):
+    count: int = Field("3", validate_default=True)
 
 
 class _NestedDefaultChildPayload(BaseModel):
@@ -179,6 +210,29 @@ class _ForbidExtraPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     count: int
+
+
+class _AllowExtraPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    count: int
+
+
+class _StrictPayload(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    count: int
+    enabled: bool
+    ratio: float
+
+
+class _StrictFieldPayload(BaseModel):
+    strict_count: Annotated[int, Field(strict=True)]
+    loose_count: int
+    strict_enabled: Annotated[bool, Field(strict=True)]
+    loose_enabled: bool
+    strict_ratio: Annotated[float, Field(strict=True)]
+    loose_ratio: float
 
 
 class _FormattedPayload(BaseModel):
@@ -202,6 +256,31 @@ class _DecimalPayload(BaseModel):
 
 class _StringPayload(BaseModel):
     value: str
+
+
+class _CoerceNumberStringPayload(BaseModel):
+    value: Annotated[str, Field(coerce_numbers_to_str=True)]
+
+
+class _StripStringPayload(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    value: str
+    code: Annotated[str, Field(min_length=2)]
+
+
+class _LowerStringPayload(BaseModel):
+    model_config = ConfigDict(str_to_lower=True)
+
+    value: str
+    code: Annotated[str, Field(pattern="^abc$")]
+
+
+class _UpperStringPayload(BaseModel):
+    model_config = ConfigDict(str_to_upper=True)
+
+    value: str
+    code: Annotated[str, Field(pattern="^ABC$")]
 
 
 class _ConstrainedStringPayload(BaseModel):
@@ -443,6 +522,69 @@ class _TupleTool(PydanticTool[_TuplePayload]):
         }
 
 
+class _AliasTool(PydanticTool[_AliasPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="alias_values", input_model=_AliasPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _AliasPayload):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+        }
+
+
+class _PopulateByNameTool(PydanticTool[_PopulateByNamePayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="populate_by_name_values", input_model=_PopulateByNamePayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _PopulateByNamePayload
+    ):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+        }
+
+
+class _PopulateByNameForbidTool(PydanticTool[_PopulateByNameForbidPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="populate_by_name_forbid_values",
+            input_model=_PopulateByNameForbidPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _PopulateByNameForbidPayload
+    ):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+        }
+
+
+class _PopulateByNameAllowTool(PydanticTool[_PopulateByNameAllowPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="populate_by_name_allow_values",
+            input_model=_PopulateByNameAllowPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _PopulateByNameAllowPayload
+    ):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+            "extras": arguments.model_extra,
+        }
+
+
 class _ConstrainedTool(PydanticTool[_ConstrainedPayload]):
     def __init__(self) -> None:
         super().__init__(name="constrained_values", input_model=_ConstrainedPayload)
@@ -545,6 +687,43 @@ class _DefaultTool(PydanticTool[_DefaultPayload]):
             "enabled_type": type(arguments.enabled).__name__,
             "label": arguments.label,
             "label_type": type(arguments.label).__name__,
+            "made": arguments.made,
+            "made_types": [type(item).__name__ for item in arguments.made],
+        }
+
+
+class _UnvalidatedDefaultTool(PydanticTool[_UnvalidatedDefaultPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="unvalidated_default_values",
+            input_model=_UnvalidatedDefaultPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _UnvalidatedDefaultPayload
+    ):
+        del context
+        count: Any = arguments.count
+        return {
+            "count": count,
+            "count_type": type(count).__name__,
+        }
+
+
+class _ValidateDefaultTool(PydanticTool[_ValidateDefaultPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="validate_default_values",
+            input_model=_ValidateDefaultPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _ValidateDefaultPayload
+    ):
+        del context
+        return {
+            "count": arguments.count,
+            "count_type": type(arguments.count).__name__,
         }
 
 
@@ -600,6 +779,61 @@ class _ForbidExtraTool(PydanticTool[_ForbidExtraPayload]):
         return {
             "count": arguments.count,
             "count_type": type(arguments.count).__name__,
+        }
+
+
+class _AllowExtraTool(PydanticTool[_AllowExtraPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="allow_extra", input_model=_AllowExtraPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _AllowExtraPayload
+    ):
+        del context
+        return {
+            "count": arguments.count,
+            "count_type": type(arguments.count).__name__,
+            "extras": arguments.model_extra,
+        }
+
+
+class _StrictTool(PydanticTool[_StrictPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="strict_values", input_model=_StrictPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _StrictPayload):
+        del context
+        return {
+            "count": arguments.count,
+            "count_type": type(arguments.count).__name__,
+            "enabled": arguments.enabled,
+            "enabled_type": type(arguments.enabled).__name__,
+            "ratio": arguments.ratio,
+            "ratio_type": type(arguments.ratio).__name__,
+        }
+
+
+class _StrictFieldTool(PydanticTool[_StrictFieldPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="strict_field_values", input_model=_StrictFieldPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _StrictFieldPayload
+    ):
+        del context
+        return {
+            "strict_count": arguments.strict_count,
+            "strict_count_type": type(arguments.strict_count).__name__,
+            "loose_count": arguments.loose_count,
+            "loose_count_type": type(arguments.loose_count).__name__,
+            "strict_enabled": arguments.strict_enabled,
+            "strict_enabled_type": type(arguments.strict_enabled).__name__,
+            "loose_enabled": arguments.loose_enabled,
+            "loose_enabled_type": type(arguments.loose_enabled).__name__,
+            "strict_ratio": arguments.strict_ratio,
+            "strict_ratio_type": type(arguments.strict_ratio).__name__,
+            "loose_ratio": arguments.loose_ratio,
+            "loose_ratio_type": type(arguments.loose_ratio).__name__,
         }
 
 
@@ -675,6 +909,80 @@ class _StringTool(PydanticTool[_StringPayload]):
         return {
             "value_type": type(arguments.value).__name__,
             "value": arguments.value,
+        }
+
+
+class _CoerceNumberStringTool(PydanticTool[_CoerceNumberStringPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="coerce_number_string_values",
+            input_model=_CoerceNumberStringPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _CoerceNumberStringPayload
+    ):
+        del context
+        return {
+            "value_type": type(arguments.value).__name__,
+            "value": arguments.value,
+        }
+
+
+class _StripStringTool(PydanticTool[_StripStringPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="strip_string_values",
+            input_model=_StripStringPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _StripStringPayload
+    ):
+        del context
+        return {
+            "value_type": type(arguments.value).__name__,
+            "value": arguments.value,
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
+        }
+
+
+class _LowerStringTool(PydanticTool[_LowerStringPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="lower_string_values",
+            input_model=_LowerStringPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _LowerStringPayload
+    ):
+        del context
+        return {
+            "value_type": type(arguments.value).__name__,
+            "value": arguments.value,
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
+        }
+
+
+class _UpperStringTool(PydanticTool[_UpperStringPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="upper_string_values",
+            input_model=_UpperStringPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _UpperStringPayload
+    ):
+        del context
+        return {
+            "value_type": type(arguments.value).__name__,
+            "value": arguments.value,
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
         }
 
 
@@ -1384,6 +1692,124 @@ async def test_pydantic_tool_content_types_mode_coerces_tuple_values() -> None:
         "variadic": [1, 2],
     }
 
+    invalid_inputs = [
+        {"pair": ["2"], "variadic": []},
+        {"pair": ["2", "yes", 3], "variadic": []},
+        {"pair": ["x", "yes"], "variadic": []},
+        {"pair": "12", "variadic": []},
+    ]
+    for input_json in invalid_inputs:
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="tuple_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_uses_alias_field_names() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_AliasTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="alias_values",
+        input=JsonContent(json={"countValue": "3"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"count_value": 3, "count_type": "int"}
+
+    both_result = await toolkit.invoke(
+        context=context,
+        name="alias_values",
+        input=JsonContent(json={"countValue": "3", "count_value": "4"}),
+    )
+
+    assert isinstance(both_result, JsonContent)
+    assert both_result.json == {"count_value": 3, "count_type": "int"}
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="alias_values",
+            input=JsonContent(json={"count_value": "4"}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_populates_aliases_by_name() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[
+            _PopulateByNameTool(),
+            _PopulateByNameForbidTool(),
+            _PopulateByNameAllowTool(),
+        ],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    field_name_result = await toolkit.invoke(
+        context=context,
+        name="populate_by_name_values",
+        input=JsonContent(json={"count_value": "4"}),
+    )
+    assert isinstance(field_name_result, JsonContent)
+    assert field_name_result.json == {"count_value": 4, "count_type": "int"}
+
+    both_result = await toolkit.invoke(
+        context=context,
+        name="populate_by_name_values",
+        input=JsonContent(json={"countValue": "3", "count_value": "4"}),
+    )
+    assert isinstance(both_result, JsonContent)
+    assert both_result.json == {"count_value": 3, "count_type": "int"}
+
+    forbid_field_name_result = await toolkit.invoke(
+        context=context,
+        name="populate_by_name_forbid_values",
+        input=JsonContent(json={"count_value": "4"}),
+    )
+    assert isinstance(forbid_field_name_result, JsonContent)
+    assert forbid_field_name_result.json == {"count_value": 4, "count_type": "int"}
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="populate_by_name_forbid_values",
+            input=JsonContent(json={"countValue": "3", "count_value": "4"}),
+        )
+
+    allow_field_name_result = await toolkit.invoke(
+        context=context,
+        name="populate_by_name_allow_values",
+        input=JsonContent(json={"count_value": "4"}),
+    )
+    assert isinstance(allow_field_name_result, JsonContent)
+    assert allow_field_name_result.json == {
+        "count_value": 4,
+        "count_type": "int",
+        "extras": {},
+    }
+
+    allow_both_result = await toolkit.invoke(
+        context=context,
+        name="populate_by_name_allow_values",
+        input=JsonContent(json={"countValue": "3", "count_value": "4"}),
+    )
+    assert isinstance(allow_both_result, JsonContent)
+    assert allow_both_result.json == {
+        "count_value": 3,
+        "count_type": "int",
+        "extras": {"count_value": "4"},
+    }
+
 
 @pytest.mark.asyncio
 async def test_pydantic_tool_content_types_mode_coerces_constrained_numbers() -> None:
@@ -1652,6 +2078,8 @@ async def test_pydantic_tool_content_types_mode_applies_model_defaults() -> None
         "enabled_type": "bool",
         "label": "alpha",
         "label_type": "str",
+        "made": [1, 2],
+        "made_types": ["int", "int"],
     }
 
     partial_result = await toolkit.invoke(
@@ -1668,7 +2096,66 @@ async def test_pydantic_tool_content_types_mode_applies_model_defaults() -> None
         "enabled_type": "bool",
         "label": "alpha",
         "label_type": "str",
+        "made": [1, 2],
+        "made_types": ["int", "int"],
     }
+
+    supplied_result = await toolkit.invoke(
+        context=context,
+        name="default_values",
+        input=JsonContent(json={"made": ["3", "4.0"]}),
+    )
+
+    assert isinstance(supplied_result, JsonContent)
+    assert supplied_result.json == {
+        "count": 3,
+        "count_type": "int",
+        "enabled": True,
+        "enabled_type": "bool",
+        "label": "alpha",
+        "label_type": "str",
+        "made": [3, 4],
+        "made_types": ["int", "int"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_preserves_unvalidated_defaults() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_UnvalidatedDefaultTool(), _ValidateDefaultTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    raw_default_result = await toolkit.invoke(
+        context=context,
+        name="unvalidated_default_values",
+        input=JsonContent(json={}),
+    )
+
+    assert isinstance(raw_default_result, JsonContent)
+    assert raw_default_result.json == {"count": "3", "count_type": "str"}
+
+    explicit_result = await toolkit.invoke(
+        context=context,
+        name="unvalidated_default_values",
+        input=JsonContent(json={"count": "4"}),
+    )
+
+    assert isinstance(explicit_result, JsonContent)
+    assert explicit_result.json == {"count": 4, "count_type": "int"}
+
+    validated_default_result = await toolkit.invoke(
+        context=context,
+        name="validate_default_values",
+        input=JsonContent(json={}),
+    )
+
+    assert isinstance(validated_default_result, JsonContent)
+    assert validated_default_result.json == {"count": 3, "count_type": "int"}
 
 
 @pytest.mark.asyncio
@@ -1767,6 +2254,161 @@ async def test_pydantic_tool_content_types_mode_rejects_forbidden_extra_fields()
             name="forbid_extra",
             input=JsonContent(json={"count": "2", "extra": 1}),
         )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_preserves_allowed_extra_fields() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_AllowExtraTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="allow_extra",
+        input=JsonContent(json={"count": "2", "extra": 1, "label": "raw"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "count": 2,
+        "count_type": "int",
+        "extras": {"extra": 1, "label": "raw"},
+    }
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="allow_extra",
+            input=JsonContent(json={"count": "x", "extra": 1}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_respects_strict_models() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_StrictTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="strict_values",
+        input=JsonContent(json={"count": 3, "enabled": True, "ratio": 1}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "count": 3,
+        "count_type": "int",
+        "enabled": True,
+        "enabled_type": "bool",
+        "ratio": 1.0,
+        "ratio_type": "float",
+    }
+
+    invalid_inputs = [
+        {"count": "3", "enabled": True, "ratio": 1.5},
+        {"count": True, "enabled": True, "ratio": 1.5},
+        {"count": 3, "enabled": "true", "ratio": 1.5},
+        {"count": 3, "enabled": True, "ratio": "1.5"},
+    ]
+    for input_json in invalid_inputs:
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="strict_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_respects_strict_fields() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_StrictFieldTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="strict_field_values",
+        input=JsonContent(
+            json={
+                "strict_count": 3,
+                "loose_count": "4",
+                "strict_enabled": True,
+                "loose_enabled": "yes",
+                "strict_ratio": 1,
+                "loose_ratio": "2.5",
+            }
+        ),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "strict_count": 3,
+        "strict_count_type": "int",
+        "loose_count": 4,
+        "loose_count_type": "int",
+        "strict_enabled": True,
+        "strict_enabled_type": "bool",
+        "loose_enabled": True,
+        "loose_enabled_type": "bool",
+        "strict_ratio": 1.0,
+        "strict_ratio_type": "float",
+        "loose_ratio": 2.5,
+        "loose_ratio_type": "float",
+    }
+
+    invalid_inputs = [
+        {
+            "strict_count": "3",
+            "loose_count": "4",
+            "strict_enabled": True,
+            "loose_enabled": "yes",
+            "strict_ratio": 1,
+            "loose_ratio": "2.5",
+        },
+        {
+            "strict_count": True,
+            "loose_count": "4",
+            "strict_enabled": True,
+            "loose_enabled": "yes",
+            "strict_ratio": 1,
+            "loose_ratio": "2.5",
+        },
+        {
+            "strict_count": 3,
+            "loose_count": "4",
+            "strict_enabled": "true",
+            "loose_enabled": "yes",
+            "strict_ratio": 1,
+            "loose_ratio": "2.5",
+        },
+        {
+            "strict_count": 3,
+            "loose_count": "4",
+            "strict_enabled": True,
+            "loose_enabled": "yes",
+            "strict_ratio": "1.5",
+            "loose_ratio": "2.5",
+        },
+    ]
+    for input_json in invalid_inputs:
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="strict_field_values",
+                input=JsonContent(json=input_json),
+            )
 
 
 @pytest.mark.asyncio
@@ -2081,6 +2723,121 @@ async def test_pydantic_tool_content_types_mode_preserves_string_exactness() -> 
                 context=context,
                 name="string_values",
                 input=JsonContent(json={"value": bad_value}),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_coerces_numbers_to_strings() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_CoerceNumberStringTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    for value, expected in (("x", "x"), (3, "3"), (3.5, "3.5")):
+        result = await toolkit.invoke(
+            context=context,
+            name="coerce_number_string_values",
+            input=JsonContent(json={"value": value}),
+        )
+
+        assert isinstance(result, JsonContent)
+        assert result.json == {"value_type": "str", "value": expected}
+
+    for bad_value in (True, False, None, [], {"a": 1}):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="coerce_number_string_values",
+                input=JsonContent(json={"value": bad_value}),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_strips_string_whitespace() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_StripStringTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="strip_string_values",
+        input=JsonContent(json={"value": "  Alpha  ", "code": "  xy  "}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "value_type": "str",
+        "value": "Alpha",
+        "code_type": "str",
+        "code": "xy",
+    }
+
+    invalid_inputs = [
+        {"value": 3, "code": "  xy  "},
+        {"value": " ok ", "code": " x "},
+        {"value": " ok ", "code": "   "},
+    ]
+    for input_json in invalid_inputs:
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="strip_string_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_normalizes_string_case() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_LowerStringTool(), _UpperStringTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    lower_result = await toolkit.invoke(
+        context=context,
+        name="lower_string_values",
+        input=JsonContent(json={"value": "AbC", "code": "abc"}),
+    )
+    assert isinstance(lower_result, JsonContent)
+    assert lower_result.json == {
+        "value_type": "str",
+        "value": "abc",
+        "code_type": "str",
+        "code": "abc",
+    }
+
+    upper_result = await toolkit.invoke(
+        context=context,
+        name="upper_string_values",
+        input=JsonContent(json={"value": "AbC", "code": "ABC"}),
+    )
+    assert isinstance(upper_result, JsonContent)
+    assert upper_result.json == {
+        "value_type": "str",
+        "value": "ABC",
+        "code_type": "str",
+        "code": "ABC",
+    }
+
+    invalid_inputs = [
+        ("lower_string_values", {"value": "abc", "code": "AbC"}),
+        ("lower_string_values", {"value": 3, "code": "abc"}),
+        ("upper_string_values", {"value": "abc", "code": "AbC"}),
+        ("upper_string_values", {"value": 3, "code": "ABC"}),
+    ]
+    for name, input_json in invalid_inputs:
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name=name,
+                input=JsonContent(json=input_json),
             )
 
 
