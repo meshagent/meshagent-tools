@@ -1208,6 +1208,19 @@ def test_spawn_task_for_each_row_prompt_format_date_strftime_extra_directives() 
         ("0.00", "ze", "0e-2"),
         ("0.00", "z.2e", "0.00e+0"),
         ("0.00", "z%", "0%"),
+        ("0", "+", "+0"),
+        ("0", "#", "0."),
+        ("0", "012", "000000000000"),
+        ("0", "#012", "00000000000."),
+        ("0", "+#012.2", "+0000000000."),
+        ("0", "0=+12", "+00000000000"),
+        ("0.000", "+", "+0.000"),
+        ("0.000", "#.2", "0.000"),
+        ("0.000", "0=+12", "+0000000.000"),
+        ("1.2300", "+#012.2", "+000000001.2"),
+        ("-1.2300", "=+12", "-     1.2300"),
+        ("1000000", "#012", "00001000000."),
+        ("1000000", "12.2G", "      1.0E+6"),
     ],
 )
 def test_spawn_task_for_each_row_decimal_format_rounds_like_python_decimal(
@@ -1363,7 +1376,9 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python(
             "{score:{zero}={width}{comma}.{precision}f}|"
             "{score:{width}.{precision}}|{score:{width}.{precision}g}|"
             "{name:{brace}>{width}}|{name:{fill}{align}{width}.{precision}}|"
-            "{name:{fill}{align}{width}s}|{id:{empty}}|{id:{width!a}}"
+            "{name:{fill}{align}{width}s}|{name:{width}.{precision}}|"
+            "{name:{width!s}.{precision!s}}|{id:{empty}}|{id:{width!a}}|"
+            "{id:{width}{precision}}|{id:{width!s}d}|{id:{width.real}}"
         ),
         queue="jobs",
     )
@@ -1393,7 +1408,9 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_compose_like_python(
             "*******7|3.14|00000007|       7|00000007|00000007|"
             "0,000,007|+0000007|0x000007|0007|0007|0003.142|"
             "0,003.142|0,003.142|    3.14|    3.14|{{{Alice|"
-            "*****Ali|***Alice|7|       7"
+            "*****Ali|***Alice|Ali     |Ali     |7|       7|"
+            "                                                                                  7|"
+            "       7|       7"
         ),
         "row": {
             "id": 7,
@@ -1533,7 +1550,19 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_match_python_limit()
             ValueError,
             "Invalid format specifier 'Alice' for object of type 'int'",
         ),
+        (
+            "{id:{name:.2}}",
+            ValueError,
+            "Invalid format specifier 'Al' for object of type 'int'",
+        ),
         ("{id:{name:{precision}}}", ValueError, "Max string recursion exceeded"),
+        ("{id:{missing}}", KeyError, "'missing'"),
+        ("{id:{width[0]}}", TypeError, "'int' object is not subscriptable"),
+        (
+            "{id:{width.__class__.__name__}}",
+            ValueError,
+            "Invalid format specifier 'int' for object of type 'int'",
+        ),
     ],
 )
 def test_spawn_task_for_each_row_prompt_format_nested_specs_errors_match_python(

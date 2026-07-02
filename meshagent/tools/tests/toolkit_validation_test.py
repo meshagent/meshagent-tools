@@ -145,6 +145,22 @@ async def test_toolkit_full_validation_mode_still_rejects_non_strict_inputs():
 
 
 @pytest.mark.asyncio
+async def test_toolkit_full_validation_reports_multiple_extra_properties() -> None:
+    toolkit = Toolkit(name="test", tools=[_AddTool()])
+    context = ToolContext(caller=object())
+
+    with pytest.raises(
+        JsonSchemaValidationError,
+        match="Additional properties are not allowed \\('x', 'y' were unexpected\\)",
+    ):
+        await toolkit.invoke(
+            context=context,
+            name="add",
+            input=JsonContent(json={"a": 1, "b": 2, "x": 3, "y": 4}),
+        )
+
+
+@pytest.mark.asyncio
 async def test_toolkit_content_types_mode_allows_optional_nested_pydantic_fields():
     toolkit = Toolkit(
         name="test",
