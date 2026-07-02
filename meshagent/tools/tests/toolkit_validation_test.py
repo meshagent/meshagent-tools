@@ -7,6 +7,7 @@ from meshagent.api import ToolContentSpec
 from meshagent.api.messaging import JsonContent
 from meshagent.api.specs.service import ContainerMountSpec
 from meshagent.tools import FunctionTool, ToolContext, Toolkit, tool
+from meshagent.tools.pydantic import PydanticTool
 
 
 _ADD_INPUT_SCHEMA = {
@@ -50,6 +51,12 @@ class _NestedPayload(BaseModel):
     value: str
 
 
+class _CoercedPayload(BaseModel):
+    count: int
+    enabled: bool
+    ratio: float
+
+
 class _NestedPayloadTool(FunctionTool):
     def __init__(self) -> None:
         super().__init__(
@@ -68,6 +75,19 @@ class _NestedPayloadTool(FunctionTool):
     async def execute(self, context: ToolContext, *, payload: _NestedPayload):
         del context
         return {"value": payload.value}
+
+
+class _CoercionTool(PydanticTool[_CoercedPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="coerce", input_model=_CoercedPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _CoercedPayload):
+        del context
+        return {
+            "count": arguments.count,
+            "enabled": arguments.enabled,
+            "ratio": arguments.ratio,
+        }
 
 
 class _RecordedSpan:
@@ -161,6 +181,109 @@ async def test_toolkit_full_validation_reports_multiple_extra_properties() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("schema", "payload", "message"),
+    [
+        (
+            {
+                "type": "object",
+                "required": ["outer"],
+                "additionalProperties": False,
+                "properties": {
+                    "outer": {
+                        "type": "object",
+                        "properties": {"a": {}},
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {"outer": {"a": 1, "z": 2, "b": 3}},
+            "Additional properties are not allowed \\('b', 'z' were unexpected\\)",
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {"fixed": {}},
+                "patternProperties": {"^x_": {}},
+                "additionalProperties": False,
+            },
+            {"fixed": 1, "x_ok": 2, "bad": 3, "also_bad": 4},
+            "'also_bad', 'bad' do not match any of the regexes: '\\^x_'",
+        ),
+        (
+            {
+                "type": "object",
+                "required": ["outer"],
+                "additionalProperties": False,
+                "properties": {
+                    "outer": {
+                        "type": "object",
+                        "patternProperties": {"^a": {}},
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            {"outer": {"abc": 1, "bad": 2, "zzz": 3}},
+            "'bad', 'zzz' do not match any of the regexes: '\\^a'",
+        ),
+        (
+            {
+                "type": "object",
+                "required": ["items"],
+                "additionalProperties": False,
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "patternProperties": {"^a": {}},
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+            },
+            {"items": [{"abc": 1}, {"bad": 2, "zzz": 3}]},
+            "'bad', 'zzz' do not match any of the regexes: '\\^a'",
+        ),
+        (
+            {
+                "type": "object",
+                "patternProperties": {
+                    "^outer": {
+                        "type": "object",
+                        "patternProperties": {"^a": {}},
+                        "additionalProperties": False,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            {"outer1": {"abc": 1, "bad": 2}},
+            "'bad' does not match any of the regexes: '\\^a'",
+        ),
+    ],
+)
+async def test_toolkit_full_validation_matches_nested_additional_properties_wording(
+    schema: dict[str, object],
+    payload: dict[str, object],
+    message: str,
+) -> None:
+    tool = FunctionTool(
+        name="schema_probe",
+        input_schema=schema,
+        output_spec=ToolContentSpec(types=["json"], stream=False),
+    )
+    toolkit = Toolkit(name="test", tools=[tool])
+    context = ToolContext(caller=object())
+
+    with pytest.raises(JsonSchemaValidationError, match=message):
+        await toolkit.invoke(
+            context=context,
+            name="schema_probe",
+            input=JsonContent(json=payload),
+        )
+
+
+@pytest.mark.asyncio
 async def test_toolkit_content_types_mode_allows_optional_nested_pydantic_fields():
     toolkit = Toolkit(
         name="test",
@@ -198,6 +321,51 @@ async def test_toolkit_content_types_mode_supports_manual_nested_pydantic_argume
 
     assert isinstance(result, JsonContent)
     assert result.json == {"value": "ok"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            {
+                "count": "2",
+                "enabled": "true",
+                "ratio": "1.5",
+                "ignored": "pydantic default extra ignore",
+            },
+            {"count": 2, "enabled": True, "ratio": 1.5},
+        ),
+        (
+            {
+                "count": "2.0",
+                "enabled": 1.0,
+                "ratio": True,
+                "ignored": "pydantic default extra ignore",
+            },
+            {"count": 2, "enabled": True, "ratio": 1.0},
+        ),
+    ],
+)
+async def test_pydantic_tool_content_types_mode_uses_model_validate_coercion(
+    payload: dict[str, object],
+    expected: dict[str, object],
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_CoercionTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="coerce",
+        input=JsonContent(json=payload),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == expected
 
 
 @pytest.mark.asyncio

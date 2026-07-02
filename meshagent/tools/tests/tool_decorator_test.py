@@ -1,5 +1,9 @@
 import inspect
+from datetime import date, datetime, time
+from decimal import Decimal
+from pathlib import Path
 from typing import Annotated, Any, Literal, Union
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, Field
@@ -43,9 +47,34 @@ def list_params(*, tags: list[str]) -> str:
     return ",".join(tags)
 
 
+@tool(name="payload_list_params")
+def payload_list_params(*, values: list[Payload]) -> int:
+    return len(values)
+
+
+@tool(name="set_params")
+def set_params(*, tags: set[str]) -> str:
+    return ",".join(sorted(tags))
+
+
+@tool(name="frozenset_params")
+def frozenset_params(*, tags: frozenset[str]) -> str:
+    return ",".join(sorted(tags))
+
+
 @tool(name="dict_params")
 def dict_params(*, scores: dict[str, int]) -> int:
     return sum(scores.values())
+
+
+@tool(name="tuple_params")
+def tuple_params(*, pair: tuple[int, str]) -> str:
+    return f"{pair[0]}:{pair[1]}"
+
+
+@tool(name="variadic_tuple_params")
+def variadic_tuple_params(*, values: tuple[int, ...]) -> str:
+    return ",".join(map(str, values))
 
 
 @tool(name="nullable_params")
@@ -61,6 +90,41 @@ def literal_params(*, mode: Literal["fast", "slow"]) -> str:
 @tool(name="bounded_params")
 def bounded_params(*, score: Annotated[int, Field(ge=1, le=5)]) -> int:
     return score
+
+
+@tool(name="date_params")
+def date_params(*, value: date) -> str:
+    return value.isoformat()
+
+
+@tool(name="datetime_params")
+def datetime_params(*, value: datetime) -> str:
+    return value.isoformat()
+
+
+@tool(name="time_params")
+def time_params(*, value: time) -> str:
+    return value.isoformat()
+
+
+@tool(name="uuid_params")
+def uuid_params(*, value: UUID) -> str:
+    return str(value)
+
+
+@tool(name="bytes_params")
+def bytes_params(*, value: bytes) -> str:
+    return value.hex()
+
+
+@tool(name="decimal_params")
+def decimal_params(*, value: Decimal) -> str:
+    return str(value)
+
+
+@tool(name="path_params")
+def path_params(*, value: Path) -> str:
+    return str(value)
 
 
 @pytest.mark.asyncio
@@ -257,6 +321,70 @@ def test_decorator_generates_strict_input_schema_for_list_annotations() -> None:
     }
 
 
+def test_decorator_generates_strict_input_schema_for_basemodel_list_annotations() -> (
+    None
+):
+    assert payload_list_params.input_schema == {
+        "$defs": {
+            "Payload": {
+                "properties": {
+                    "name": {"title": "Name", "type": "string"},
+                    "count": {"title": "Count", "type": "integer"},
+                },
+                "required": ["name", "count"],
+                "title": "Payload",
+                "type": "object",
+                "additionalProperties": False,
+            }
+        },
+        "properties": {
+            "values": {
+                "items": {"$ref": "#/$defs/Payload"},
+                "title": "Values",
+                "type": "array",
+            }
+        },
+        "required": ["values"],
+        "title": "payload_list_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_set_annotations() -> None:
+    assert set_params.input_schema == {
+        "properties": {
+            "tags": {
+                "items": {"type": "string"},
+                "title": "Tags",
+                "type": "array",
+                "uniqueItems": True,
+            }
+        },
+        "required": ["tags"],
+        "title": "set_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_frozenset_annotations() -> None:
+    assert frozenset_params.input_schema == {
+        "properties": {
+            "tags": {
+                "items": {"type": "string"},
+                "title": "Tags",
+                "type": "array",
+                "uniqueItems": True,
+            }
+        },
+        "required": ["tags"],
+        "title": "frozenset_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
 def test_decorator_generates_strict_input_schema_for_dict_annotations() -> None:
     assert dict_params.input_schema == {
         "properties": {
@@ -270,6 +398,45 @@ def test_decorator_generates_strict_input_schema_for_dict_annotations() -> None:
         },
         "required": ["scores"],
         "title": "dict_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_tuple_annotations() -> None:
+    assert tuple_params.input_schema == {
+        "properties": {
+            "pair": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                    {"type": "integer"},
+                    {"type": "string"},
+                ],
+                "title": "Pair",
+                "type": "array",
+            }
+        },
+        "required": ["pair"],
+        "title": "tuple_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_variadic_tuple_annotations() -> (
+    None
+):
+    assert variadic_tuple_params.input_schema == {
+        "properties": {
+            "values": {
+                "items": {"type": "integer"},
+                "title": "Values",
+                "type": "array",
+            }
+        },
+        "required": ["values"],
+        "title": "variadic_tuple_paramsInput",
         "type": "object",
         "additionalProperties": False,
     }
@@ -318,6 +485,120 @@ def test_decorator_generates_strict_input_schema_for_bounded_annotations() -> No
         },
         "required": ["score"],
         "title": "bounded_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_date_annotations() -> None:
+    assert date_params.input_schema == {
+        "properties": {
+            "value": {
+                "format": "date",
+                "title": "Value",
+                "type": "string",
+            }
+        },
+        "required": ["value"],
+        "title": "date_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_datetime_annotations() -> None:
+    assert datetime_params.input_schema == {
+        "properties": {
+            "value": {
+                "format": "date-time",
+                "title": "Value",
+                "type": "string",
+            }
+        },
+        "required": ["value"],
+        "title": "datetime_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_time_annotations() -> None:
+    assert time_params.input_schema == {
+        "properties": {
+            "value": {
+                "format": "time",
+                "title": "Value",
+                "type": "string",
+            }
+        },
+        "required": ["value"],
+        "title": "time_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_uuid_annotations() -> None:
+    assert uuid_params.input_schema == {
+        "properties": {
+            "value": {
+                "format": "uuid",
+                "title": "Value",
+                "type": "string",
+            }
+        },
+        "required": ["value"],
+        "title": "uuid_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_bytes_annotations() -> None:
+    assert bytes_params.input_schema == {
+        "properties": {
+            "value": {
+                "format": "binary",
+                "title": "Value",
+                "type": "string",
+            }
+        },
+        "required": ["value"],
+        "title": "bytes_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_decimal_annotations() -> None:
+    assert decimal_params.input_schema == {
+        "properties": {
+            "value": {
+                "anyOf": [
+                    {"type": "number"},
+                    {"type": "string"},
+                ],
+                "title": "Value",
+            }
+        },
+        "required": ["value"],
+        "title": "decimal_paramsInput",
+        "type": "object",
+        "additionalProperties": False,
+    }
+
+
+def test_decorator_generates_strict_input_schema_for_path_annotations() -> None:
+    assert path_params.input_schema == {
+        "properties": {
+            "value": {
+                "format": "path",
+                "title": "Value",
+                "type": "string",
+            }
+        },
+        "required": ["value"],
+        "title": "path_paramsInput",
         "type": "object",
         "additionalProperties": False,
     }
