@@ -496,7 +496,7 @@ async def test_count_tool_matches_python_schema_normalization_and_room_call() ->
     assert tool.name == "count_users"
     assert tool.title == "count_users"
     assert tool.description == "count matching rows in the users table"
-    assert tool.input_schema["required"] == ["query", "params"]
+    assert tool.input_schema["required"] == ["query"]
     assert result == {"rows": 3}
     assert room.datasets.count_calls == [
         {
