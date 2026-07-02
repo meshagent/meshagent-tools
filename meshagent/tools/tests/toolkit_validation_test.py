@@ -417,6 +417,39 @@ class _FieldBeforeCustomValidatorPayload(BaseModel):
         return value.upper()
 
 
+class _FieldValidatorDefaultPayload(BaseModel):
+    skipped: str = "x-skip"
+    validated: str = Field("x-run", validate_default=True)
+
+    @field_validator("skipped", "validated", mode="before")
+    @classmethod
+    def uppercase_default(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.upper()
+        return value
+
+    @field_validator("skipped", "validated")
+    @classmethod
+    def append_after(cls, value: str) -> str:
+        return f"{value}-AFTER"
+
+
+class _PlainFieldValidatorPayload(BaseModel):
+    code: str
+
+    @field_validator("code", mode="plain")
+    @classmethod
+    def extract_code(cls, value: object) -> object:
+        if isinstance(value, dict):
+            return f"x-{value['code']}"
+        return value
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        return value.upper()
+
+
 class _AfterCustomValidatorPayload(BaseModel):
     left: int
     right: int
@@ -1351,6 +1384,40 @@ class _FieldBeforeCustomValidatorTool(PydanticTool[_FieldBeforeCustomValidatorPa
 
     async def execute_model(
         self, *, context: ToolContext, arguments: _FieldBeforeCustomValidatorPayload
+    ):
+        del context
+        return {
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
+        }
+
+
+class _FieldValidatorDefaultTool(PydanticTool[_FieldValidatorDefaultPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="field_validator_default_values",
+            input_model=_FieldValidatorDefaultPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _FieldValidatorDefaultPayload
+    ):
+        del context
+        return {
+            "skipped": arguments.skipped,
+            "validated": arguments.validated,
+        }
+
+
+class _PlainFieldValidatorTool(PydanticTool[_PlainFieldValidatorPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="plain_field_validator_values",
+            input_model=_PlainFieldValidatorPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _PlainFieldValidatorPayload
     ):
         del context
         return {
@@ -3665,6 +3732,61 @@ async def test_pydantic_tool_content_types_mode_runs_field_before_custom_validat
             name="field_before_custom_validator_values",
             input=JsonContent(json={"code": {"bad": "value"}}),
         )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_runs_field_validators_on_validated_defaults() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_FieldValidatorDefaultTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    omitted_result = await toolkit.invoke(
+        context=context,
+        name="field_validator_default_values",
+        input=JsonContent(json={}),
+    )
+
+    assert isinstance(omitted_result, JsonContent)
+    assert omitted_result.json == {
+        "skipped": "x-skip",
+        "validated": "X-RUN-AFTER",
+    }
+
+    explicit_result = await toolkit.invoke(
+        context=context,
+        name="field_validator_default_values",
+        input=JsonContent(json={"skipped": "x-explicit", "validated": "x-explicit"}),
+    )
+
+    assert isinstance(explicit_result, JsonContent)
+    assert explicit_result.json == {
+        "skipped": "X-EXPLICIT-AFTER",
+        "validated": "X-EXPLICIT-AFTER",
+    }
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_runs_plain_field_validators() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_PlainFieldValidatorTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="plain_field_validator_values",
+        input=JsonContent(json={"code": {"code": 7}}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"code_type": "str", "code": "X-7"}
 
 
 @pytest.mark.asyncio
