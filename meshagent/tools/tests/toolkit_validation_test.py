@@ -6,7 +6,16 @@ from enum import Enum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, RootModel
+from pydantic import (
+    AliasChoices,
+    AliasPath,
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    field_validator,
+    model_validator,
+)
 
 import meshagent.tools.toolkit as toolkit_module
 from meshagent.api import ToolContentSpec
@@ -358,6 +367,72 @@ class _UpperStringPayload(BaseModel):
 
 class _ConstrainedStringPayload(BaseModel):
     code: Annotated[str, Field(min_length=2, max_length=4, pattern="^x[0-9]+$")]
+
+
+class _CustomValidatorPayload(BaseModel):
+    code: str
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        if not value.startswith("x-"):
+            raise ValueError("code must start with x-")
+        return value.removeprefix("x-").upper()
+
+    @field_validator("code")
+    @classmethod
+    def append_suffix(cls, value: str) -> str:
+        return f"{value}-OK"
+
+
+class _BeforeCustomValidatorPayload(BaseModel):
+    code: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def map_legacy_code(cls, value: object) -> object:
+        if isinstance(value, dict) and "legacy_code" in value:
+            return {"code": value["legacy_code"]}
+        return value
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        return value.upper()
+
+
+class _FieldBeforeCustomValidatorPayload(BaseModel):
+    code: str
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def coerce_int_code(cls, value: object) -> object:
+        if isinstance(value, int):
+            return f"x-{value}"
+        return value
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str) -> str:
+        return value.upper()
+
+
+class _AfterCustomValidatorPayload(BaseModel):
+    left: int
+    right: int
+    total: int = 0
+
+    @field_validator("left")
+    @classmethod
+    def increment_left(cls, value: int) -> int:
+        return value + 1
+
+    @model_validator(mode="after")
+    def fill_total(self):
+        self.total = self.left + self.right
+        if self.total < 10:
+            raise ValueError("total must be at least 10")
+        return self
 
 
 class _NestedPayloadTool(FunctionTool):
@@ -1231,6 +1306,74 @@ class _ConstrainedStringTool(PydanticTool[_ConstrainedStringPayload]):
         return {
             "code_type": type(arguments.code).__name__,
             "code": arguments.code,
+        }
+
+
+class _CustomValidatorTool(PydanticTool[_CustomValidatorPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="custom_validator_values", input_model=_CustomValidatorPayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _CustomValidatorPayload
+    ):
+        del context
+        return {
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
+        }
+
+
+class _BeforeCustomValidatorTool(PydanticTool[_BeforeCustomValidatorPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="before_custom_validator_values",
+            input_model=_BeforeCustomValidatorPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _BeforeCustomValidatorPayload
+    ):
+        del context
+        return {
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
+        }
+
+
+class _FieldBeforeCustomValidatorTool(PydanticTool[_FieldBeforeCustomValidatorPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="field_before_custom_validator_values",
+            input_model=_FieldBeforeCustomValidatorPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _FieldBeforeCustomValidatorPayload
+    ):
+        del context
+        return {
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
+        }
+
+
+class _AfterCustomValidatorTool(PydanticTool[_AfterCustomValidatorPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="after_custom_validator_values",
+            input_model=_AfterCustomValidatorPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _AfterCustomValidatorPayload
+    ):
+        del context
+        return {
+            "left": arguments.left,
+            "right": arguments.right,
+            "total": arguments.total,
         }
 
 
@@ -3264,7 +3407,7 @@ async def test_pydantic_tool_content_types_mode_parses_decimal_scalars(
     assert isinstance(result, JsonContent)
     assert result.json == expected
 
-    for bad_amount in ("NaN", "Infinity"):
+    for bad_amount in ("NaN", "Infinity", True, False):
         with pytest.raises(Exception):
             await toolkit.invoke(
                 context=context,
@@ -3441,6 +3584,113 @@ async def test_pydantic_tool_content_types_mode_validates_string_constraints() -
                 name="constrained_string_values",
                 input=JsonContent(json={"code": bad_code}),
             )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_runs_custom_validators() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_CustomValidatorTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="custom_validator_values",
+        input=JsonContent(json={"code": "x-alpha"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"code_type": "str", "code": "ALPHA-OK"}
+
+    for bad_code in ("alpha", 12):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="custom_validator_values",
+                input=JsonContent(json={"code": bad_code}),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_runs_before_custom_validators() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_BeforeCustomValidatorTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="before_custom_validator_values",
+        input=JsonContent(json={"legacy_code": "alpha"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"code_type": "str", "code": "ALPHA"}
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="before_custom_validator_values",
+            input=JsonContent(json={"other": "alpha"}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_runs_field_before_custom_validators() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_FieldBeforeCustomValidatorTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="field_before_custom_validator_values",
+        input=JsonContent(json={"code": 7}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"code_type": "str", "code": "X-7"}
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="field_before_custom_validator_values",
+            input=JsonContent(json={"code": {"bad": "value"}}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_runs_after_custom_validators() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_AfterCustomValidatorTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="after_custom_validator_values",
+        input=JsonContent(json={"left": "4", "right": "5"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"left": 5, "right": 5, "total": 10}
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="after_custom_validator_values",
+            input=JsonContent(json={"left": "1", "right": "2"}),
+        )
 
 
 @pytest.mark.asyncio
