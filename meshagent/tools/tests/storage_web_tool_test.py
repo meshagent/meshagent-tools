@@ -12,7 +12,7 @@ from meshagent.api import RoomClient, RoomException
 from meshagent.api.messaging import FileContent, JsonContent, TextContent
 from meshagent.tools import ToolContext
 from meshagent.tools._text_utils import grep_text, truncate_text
-from meshagent.tools.blob import get_bytes_from_url
+from meshagent.tools.blob import Blob, get_bytes_from_url
 from meshagent.tools.storage import (
     StorageToolLocalMount,
     StorageToolRoomMount,
@@ -1094,6 +1094,186 @@ async def test_room_mount_write_file_uses_room_storage_upload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_file_rejects_selected_read_only_mount() -> None:
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(path="/readonly", local_path="/tmp", read_only=True),
+            StorageToolLocalMount(path="/writable", local_path="/tmp"),
+        ],
+    )
+
+    with pytest.raises(
+        RoomException, match="storage mount is read-only: /readonly/file.txt"
+    ):
+        await toolkit.execute(
+            context=ToolContext(caller=object()),
+            name="write_file",
+            input=JsonContent(
+                json={
+                    "path": "/readonly/file.txt",
+                    "text": "hello",
+                    "overwrite": False,
+                }
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_files_uses_selected_read_only_mount(tmp_path) -> None:
+    readonly_root = tmp_path / "readonly"
+    writable_root = tmp_path / "writable"
+    readonly_root.mkdir()
+    writable_root.mkdir()
+    (readonly_root / "readable.txt").write_text("hello", encoding="utf-8")
+    (writable_root / "other.txt").write_text("ignored", encoding="utf-8")
+
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(
+                path="/readonly", local_path=str(readonly_root), read_only=True
+            ),
+            StorageToolLocalMount(path="/writable", local_path=str(writable_root)),
+        ],
+    )
+
+    result = await toolkit.execute(
+        context=ToolContext(caller=object()),
+        name="list_files_in_room",
+        input=JsonContent(json={"path": "/readonly"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert [entry["name"] for entry in result.json["files"]] == ["readable.txt"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_uses_selected_read_only_mount(tmp_path) -> None:
+    readonly_root = tmp_path / "readonly"
+    writable_root = tmp_path / "writable"
+    readonly_root.mkdir()
+    writable_root.mkdir()
+    (readonly_root / "readable.txt").write_text("hello from readonly", encoding="utf-8")
+    (writable_root / "readable.txt").write_text("wrong mount", encoding="utf-8")
+
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(
+                path="/readonly", local_path=str(readonly_root), read_only=True
+            ),
+            StorageToolLocalMount(path="/writable", local_path=str(writable_root)),
+        ],
+    )
+
+    result = await toolkit.execute(
+        context=ToolContext(caller=object()),
+        name="read_file",
+        input=JsonContent(json={"path": "/readonly/readable.txt", "offset": 0}),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == "hello from readonly"
+
+
+@pytest.mark.asyncio
+async def test_grep_file_uses_selected_read_only_mount(tmp_path) -> None:
+    readonly_root = tmp_path / "readonly"
+    writable_root = tmp_path / "writable"
+    readonly_root.mkdir()
+    writable_root.mkdir()
+    (readonly_root / "notes.txt").write_text(
+        "alpha\nneedle from readonly\nomega\n", encoding="utf-8"
+    )
+    (writable_root / "notes.txt").write_text("needle from writable\n", encoding="utf-8")
+
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(
+                path="/readonly", local_path=str(readonly_root), read_only=True
+            ),
+            StorageToolLocalMount(path="/writable", local_path=str(writable_root)),
+        ],
+    )
+
+    result = await toolkit.execute(
+        context=ToolContext(caller=object()),
+        name="grep_file",
+        input=JsonContent(
+            json={
+                "path": "/readonly/notes.txt",
+                "pattern": "needle",
+                "offset": 0,
+                "before": 0,
+                "after": 0,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == "2: needle from readonly"
+
+
+@pytest.mark.asyncio
+async def test_get_download_url_uses_selected_read_only_mount(tmp_path) -> None:
+    readonly_root = tmp_path / "readonly"
+    writable_root = tmp_path / "writable"
+    readonly_root.mkdir()
+    writable_root.mkdir()
+    (readonly_root / "download.txt").write_text("readonly file", encoding="utf-8")
+    (writable_root / "download.txt").write_text("wrong mount", encoding="utf-8")
+
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(
+                path="/readonly", local_path=str(readonly_root), read_only=True
+            ),
+            StorageToolLocalMount(path="/writable", local_path=str(writable_root)),
+        ],
+    )
+
+    result = await toolkit.get_download_url(path="/readonly/download.txt")
+
+    assert result.name == "download.txt"
+    assert result.url.startswith("file://")
+    assert result.url.endswith("/readonly/download.txt")
+
+
+@pytest.mark.asyncio
+async def test_standalone_get_file_download_url_uses_selected_read_only_mount(
+    tmp_path,
+) -> None:
+    readonly_root = tmp_path / "readonly"
+    writable_root = tmp_path / "writable"
+    readonly_root.mkdir()
+    writable_root.mkdir()
+    (readonly_root / "download.txt").write_text("readonly file", encoding="utf-8")
+    (writable_root / "download.txt").write_text("wrong mount", encoding="utf-8")
+    tool = storage_toolkit.GetFileDownloadUrl(
+        mounts=storage_toolkit._prepare_mounts(
+            [
+                StorageToolLocalMount(
+                    path="/readonly", local_path=str(readonly_root), read_only=True
+                ),
+                StorageToolLocalMount(path="/writable", local_path=str(writable_root)),
+            ]
+        )
+    )
+
+    result = await tool.execute(
+        context=ToolContext(caller=object()),
+        path="/readonly/download.txt",
+    )
+
+    assert result.name == "download.txt"
+    assert result.url.startswith("file://")
+    assert result.url.endswith("/readonly/download.txt")
+
+
+@pytest.mark.asyncio
 async def test_room_mount_read_file_uses_room_storage_download() -> None:
     room = _FakeRoom()
     toolkit = StorageToolkit(
@@ -1811,6 +1991,174 @@ def test_toolkits_expose_grep_tools() -> None:
 
     assert "grep_file" in storage_tool_names
     assert "web_grep" in web_tool_names
+
+
+def test_storage_toolkit_omits_write_tools_when_all_mounts_are_read_only() -> None:
+    storage_toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[StorageToolLocalMount(path="/", local_path="/tmp", read_only=True)],
+    )
+
+    assert [tool.name for tool in storage_toolkit.tools] == [
+        "list_files_in_room",
+        "read_file",
+        "grep_file",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_storage_toolkit_read_only_direct_writes_fail_before_path_resolution() -> (
+    None
+):
+    storage_toolkit = StorageToolkit(
+        read_only=True,
+        mounts=[StorageToolLocalMount(path="/", local_path="/tmp")],
+    )
+
+    with pytest.raises(RoomException, match="storage toolkit is read-only: ../bad.txt"):
+        await storage_toolkit.write_text(
+            path="../bad.txt", text="hello", overwrite=True
+        )
+
+    with pytest.raises(RoomException, match="storage toolkit is read-only: ../bad.bin"):
+        await storage_toolkit.write_bytes(
+            path="../bad.bin", data=b"hello", overwrite=True
+        )
+
+    with pytest.raises(RoomException, match="storage toolkit is read-only: ../bad.txt"):
+        await storage_toolkit.delete(path="../bad.txt")
+
+
+@pytest.mark.asyncio
+async def test_storage_toolkit_direct_writes_reject_selected_read_only_mount() -> None:
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(path="/readonly", local_path="/tmp", read_only=True),
+            StorageToolLocalMount(path="/writable", local_path="/tmp"),
+        ],
+    )
+
+    with pytest.raises(
+        RoomException, match="storage mount is read-only: /readonly/file.txt"
+    ):
+        await toolkit.write_text(
+            path="/readonly/file.txt", text="hello", overwrite=True
+        )
+
+    with pytest.raises(
+        RoomException, match="storage mount is read-only: /readonly/file.bin"
+    ):
+        await toolkit.write_bytes(
+            path="/readonly/file.bin", data=b"hello", overwrite=True
+        )
+
+    with pytest.raises(
+        RoomException, match="storage mount is read-only: /readonly/file.txt"
+    ):
+        await toolkit.delete(path="/readonly/file.txt")
+
+
+@pytest.mark.asyncio
+async def test_storage_toolkit_direct_writes_use_selected_writable_mount(
+    tmp_path,
+) -> None:
+    readonly_root = tmp_path / "readonly"
+    writable_root = tmp_path / "writable"
+    readonly_root.mkdir()
+    writable_root.mkdir()
+    (writable_root / "delete-me.txt").write_text("old", encoding="utf-8")
+
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(
+                path="/readonly", local_path=str(readonly_root), read_only=True
+            ),
+            StorageToolLocalMount(path="/writable", local_path=str(writable_root)),
+        ],
+    )
+
+    await toolkit.write_text(path="/writable/text.txt", text="hello", overwrite=False)
+    await toolkit.write_bytes(path="/writable/blob.bin", data=b"bytes", overwrite=False)
+    await toolkit.delete(path="/writable/delete-me.txt")
+
+    assert (writable_root / "text.txt").read_text(encoding="utf-8") == "hello"
+    assert (writable_root / "blob.bin").read_bytes() == b"bytes"
+    assert not (writable_root / "delete-me.txt").exists()
+    assert list(readonly_root.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_save_file_from_url_resolves_path_before_fetching(monkeypatch) -> None:
+    fetched_urls: list[str] = []
+
+    async def fake_get_bytes_from_url(*, url: str):
+        fetched_urls.append(url)
+        raise AssertionError("fetch should not be called for an invalid storage path")
+
+    monkeypatch.setattr(storage_toolkit, "get_bytes_from_url", fake_get_bytes_from_url)
+
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[StorageToolLocalMount(path="/", local_path="/tmp")],
+    )
+
+    with pytest.raises(RoomException, match="dot segments not allowed: ../bad.bin"):
+        await toolkit.execute(
+            context=ToolContext(caller=object()),
+            name="save_file_from_url",
+            input=JsonContent(
+                json={
+                    "url": "https://example.com/file.bin",
+                    "path": "../bad.bin",
+                    "overwrite": False,
+                }
+            ),
+        )
+
+    assert fetched_urls == []
+
+
+@pytest.mark.asyncio
+async def test_save_file_from_url_fetches_before_read_only_mount_error(
+    monkeypatch,
+) -> None:
+    fetched_urls: list[str] = []
+
+    async def fake_get_bytes_from_url(*, url: str):
+        fetched_urls.append(url)
+        return Blob(
+            mime_type="application/octet-stream",
+            data=b"downloaded",
+        )
+
+    monkeypatch.setattr(storage_toolkit, "get_bytes_from_url", fake_get_bytes_from_url)
+
+    toolkit = StorageToolkit(
+        read_only=False,
+        mounts=[
+            StorageToolLocalMount(path="/readonly", local_path="/tmp", read_only=True),
+            StorageToolLocalMount(path="/writable", local_path="/tmp"),
+        ],
+    )
+
+    with pytest.raises(
+        RoomException, match="storage mount is read-only: /readonly/file.bin"
+    ):
+        await toolkit.execute(
+            context=ToolContext(caller=object()),
+            name="save_file_from_url",
+            input=JsonContent(
+                json={
+                    "url": "https://example.com/file.bin",
+                    "path": "/readonly/file.bin",
+                    "overwrite": False,
+                }
+            ),
+        )
+
+    assert fetched_urls == ["https://example.com/file.bin"]
 
 
 def test_updated_function_tool_schemas_are_strict() -> None:
