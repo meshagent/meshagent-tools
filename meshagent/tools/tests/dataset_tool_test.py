@@ -16,6 +16,8 @@ from meshagent.api.messaging import (
 from meshagent.api.room_server_client import DatasetSqlQuery, DatasetSqlStatement
 from meshagent.tools import ToolContext
 from meshagent.tools.dataset import (
+    AdvancedDeleteRowsTool,
+    CountTool,
     DatasetToolkit,
     SpawnTaskForEachRow,
     make_dataset_toolkit,
@@ -27,6 +29,8 @@ class _FakeDatasetsClient:
     def __init__(self) -> None:
         self.insert_calls: list[dict] = []
         self.search_calls: list[dict] = []
+        self.count_calls: list[dict] = []
+        self.delete_calls: list[dict] = []
         self.inspect_calls: list[dict] = []
         self.execute_sql_calls: list[dict] = []
         self.read_sql_query_calls: list[dict] = []
@@ -36,6 +40,7 @@ class _FakeDatasetsClient:
         self.sql_read_error: Exception | None = None
         self.sql_close_error: Exception | None = None
         self.search_result = pa.table({"id": [1], "name": ["Alice"]})
+        self.count_result = 3
 
     async def insert(self, *, table: str, records: list[dict], namespace=None) -> None:
         self.insert_calls.append(
@@ -56,6 +61,25 @@ class _FakeDatasetsClient:
             }
         )
         return self.search_result
+
+    async def count(self, *, table: str, where=None, namespace=None):
+        self.count_calls.append(
+            {
+                "table": table,
+                "where": where,
+                "namespace": namespace,
+            }
+        )
+        return self.count_result
+
+    async def delete(self, *, table: str, where: str, namespace=None) -> None:
+        self.delete_calls.append(
+            {
+                "table": table,
+                "where": where,
+                "namespace": namespace,
+            }
+        )
 
     async def inspect(self, *, table: str, namespace=None):
         self.inspect_calls.append({"table": table, "namespace": namespace})
@@ -194,6 +218,55 @@ def test_dataset_toolkit_uses_openai_compatible_strict_input_schemas() -> None:
             tool.input_schema,
             path=tool.name,
         )
+
+
+def test_dataset_toolkit_tool_order_and_metadata_match_python() -> None:
+    room = _FakeRoom()
+    schema = {
+        "id": pa.int64(),
+        "name": pa.string(),
+    }
+    toolkit = DatasetToolkit(
+        tables={
+            "users": schema,
+            "events": schema,
+        },
+        namespace=["prod"],
+        room=room,
+    )
+
+    assert toolkit.name == "dataset"
+    assert toolkit.title == "dataset"
+    assert toolkit.description == "tools for interacting with meshagent datasets"
+    assert [tool.name for tool in toolkit.tools] == [
+        "execute_sql",
+        "insert_users_rows",
+        "update_users_rows",
+        "advanced_delete_users",
+        "count_users",
+        "advanced_search_users",
+        "insert_events_rows",
+        "update_events_rows",
+        "advanced_delete_events",
+        "count_events",
+        "advanced_search_events",
+    ]
+    assert "list_tables" not in {tool.name for tool in toolkit.tools}
+    assert "search_users" not in {tool.name for tool in toolkit.tools}
+    assert "spawn_task_for_each_users_row" not in {tool.name for tool in toolkit.tools}
+
+    read_only_toolkit = DatasetToolkit(
+        tables={"users": schema},
+        read_only=True,
+        namespace=["prod"],
+        room=room,
+    )
+
+    assert [tool.name for tool in read_only_toolkit.tools] == [
+        "execute_sql",
+        "count_users",
+        "advanced_search_users",
+    ]
 
 
 @pytest.mark.asyncio
@@ -377,6 +450,119 @@ async def test_spawn_task_for_each_row_all_null_query_returns_zero_without_queue
         }
     ]
     assert room.queues.send_calls == []
+
+
+def test_spawn_task_for_each_row_custom_metadata_matches_python() -> None:
+    tool = SpawnTaskForEachRow(
+        room=_FakeRoom(),
+        table="users",
+        schema={"id": pa.int64(), "name": pa.string()},
+        prompt="Process {id}",
+        queue="jobs",
+        name="custom_spawn",
+        title="Custom Spawn",
+        description="custom description",
+    )
+
+    assert tool.name == "custom_spawn"
+    assert tool.title == "Custom Spawn"
+    assert tool.description == "custom description"
+    assert tool.input_schema["properties"]["select"]["description"] == (
+        "the columns to return, available columns: id,name"
+    )
+
+
+@pytest.mark.asyncio
+async def test_count_tool_matches_python_schema_normalization_and_room_call() -> None:
+    room = _FakeRoom()
+    tool = CountTool(
+        room=room,
+        table="users",
+        schema={
+            "name": pa.string(),
+            "event_date": pa.date32(),
+        },
+        namespace=["prod"],
+    )
+
+    result = await tool.execute(
+        context=_tool_context(room),
+        query={
+            "name": "Alice",
+            "event_date": {"date": "2026-04-09"},
+        },
+    )
+
+    assert tool.name == "count_users"
+    assert tool.title == "count_users"
+    assert tool.description == "count matching rows in the users table"
+    assert tool.input_schema["required"] == ["query", "params"]
+    assert result == {"rows": 3}
+    assert room.datasets.count_calls == [
+        {
+            "table": "users",
+            "where": {
+                "name": "Alice",
+                "event_date": date(2026, 4, 9),
+            },
+            "namespace": ["prod"],
+        }
+    ]
+
+    room.datasets.count_calls.clear()
+    result = await tool.execute(
+        context=_tool_context(room),
+        query={"name": None, "event_date": None},
+    )
+
+    assert result == {"rows": 3}
+    assert room.datasets.count_calls == [
+        {
+            "table": "users",
+            "where": None,
+            "namespace": ["prod"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_advanced_delete_tool_matches_python_schema_and_room_call() -> None:
+    room = _FakeRoom()
+    tool = AdvancedDeleteRowsTool(
+        room=room,
+        table="users",
+        schema={
+            "name": pa.field("name", pa.string(), nullable=False),
+            "event_date": pa.field("event_date", pa.date32(), nullable=True),
+        },
+        namespace=["prod"],
+    )
+
+    result = await tool.execute(
+        context=_tool_context(room),
+        where="name = 'Alice'",
+    )
+
+    assert tool.name == "advanced_delete_users"
+    assert tool.title == "advanced delete users"
+    assert (
+        tool.description
+        == "advanced search users table with a lancedb compatible filter and delete the matching rows"
+    )
+    assert tool.input_schema["required"] == ["where"]
+    assert tool.input_schema["properties"]["where"]["description"] == (
+        "a lance db compatible filter, columns are: "
+        "column name => pyarrow.Field<name: string not null>"
+        "column event_date => pyarrow.Field<event_date: date32[day]>"
+    )
+    assert result == {"ok": True}
+    assert room.datasets.delete_calls == [
+        {
+            "table": "users",
+            "where": "name = 'Alice'",
+            "namespace": ["prod"],
+        }
+    ]
 
 
 def test_spawn_task_for_each_row_prompt_format_uses_python_format_specs() -> None:
@@ -1762,6 +1948,20 @@ async def test_dataset_toolkit_advanced_search_uses_room_dataset_search() -> Non
         namespace=["prod"],
         room=room,
     )
+    tool = toolkit.get_tool("advanced_search_users")
+
+    assert tool.name == "advanced_search_users"
+    assert tool.title == "advanced search users"
+    assert (
+        tool.description
+        == "advanced search users table with a lancedb compatible filter"
+    )
+    assert tool.input_schema["required"] == ["where"]
+    assert tool.input_schema["properties"]["where"]["description"] == (
+        "a lance db compatible filter, columns are: "
+        "column id => int64\n"
+        "column name => string\n"
+    )
 
     result = await toolkit.execute(
         context=_tool_context(room),
@@ -1981,6 +2181,18 @@ async def test_dataset_toolkit_execute_sql_returns_statement_result() -> None:
         namespace=["prod"],
         room=room,
     )
+    tool = toolkit.get_tool("execute_sql")
+
+    assert tool.name == "execute_sql"
+    assert tool.title == "execute SQL"
+    assert tool.description == (
+        "execute a DataFusion SQL query or statement against the room datasets. "
+        "SELECT-like commands return rows; update, delete, DDL, and other statements return rows_affected."
+    )
+    assert tool.input_schema["required"] == ["query", "params"]
+    assert tool.input_schema["properties"]["params"]["description"] == (
+        "optional named parameter values encoded as a single JSON object"
+    )
 
     result = await toolkit.execute(
         context=_tool_context(room),
@@ -1992,6 +2204,23 @@ async def test_dataset_toolkit_execute_sql_returns_statement_result() -> None:
     assert result.json == {"kind": "statement", "rows_affected": 3}
     assert room.datasets.read_sql_query_calls == []
     assert room.datasets.close_sql_query_calls == []
+    assert room.datasets.execute_sql_calls[-1]["params"] is None
+
+    for params in ({}, None):
+        result = await toolkit.execute(
+            context=_tool_context(room),
+            name="execute_sql",
+            input=JsonContent(
+                json={
+                    "query": "delete from users",
+                    "params": params,
+                }
+            ),
+        )
+
+        assert isinstance(result, JsonContent)
+        assert result.json == {"kind": "statement", "rows_affected": 3}
+        assert room.datasets.execute_sql_calls[-1]["params"] is None
 
 
 @pytest.mark.asyncio

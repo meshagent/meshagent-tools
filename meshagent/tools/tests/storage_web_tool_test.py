@@ -18,7 +18,7 @@ from meshagent.tools.storage import (
     StorageToolRoomMount,
     StorageToolkit,
 )
-from meshagent.tools.web_toolkit import WebToolkit
+from meshagent.tools.web_toolkit import WebFetchTool, WebGrepTool, WebToolkit
 import meshagent.tools.web_toolkit as web_toolkit
 import meshagent.tools.storage as storage_toolkit
 
@@ -2033,6 +2033,18 @@ def test_toolkits_expose_grep_tools() -> None:
 
     assert "grep_file" in storage_tool_names
     assert "web_grep" in web_tool_names
+
+
+def test_web_toolkit_max_length_validation_matches_python() -> None:
+    for constructor in (WebToolkit, WebFetchTool, WebGrepTool):
+        with pytest.raises(ValueError, match="max_length must be greater than 0"):
+            constructor(max_length=0)
+        with pytest.raises(ValueError, match="max_length must be greater than 0"):
+            constructor(max_length=-1)
+        with pytest.raises(ValueError, match="max_length must be an integer"):
+            constructor(max_length=True)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="max_length must be an integer"):
+            constructor(max_length=1.5)  # type: ignore[arg-type]
 
 
 def test_storage_toolkit_omits_write_tools_when_all_mounts_are_read_only() -> None:
