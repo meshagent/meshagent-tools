@@ -1449,6 +1449,48 @@ async def test_web_fetch_supports_offset_and_truncation(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_and_grep_status_errors_before_decoding(monkeypatch) -> None:
+    fake_response = _FakeResponse(
+        data=b"not decoded",
+        status=404,
+        content_type="text/plain",
+        charset="not-a-real-codec",
+    )
+    monkeypatch.setattr(
+        web_toolkit, "new_client_session", lambda: _FakeSession(fake_response)
+    )
+
+    toolkit = WebToolkit(max_length=500)
+
+    with pytest.raises(Exception, match="web fetch failed with status 404"):
+        await toolkit.execute(
+            context=_tool_context(),
+            name="web_fetch",
+            input=JsonContent(
+                json={
+                    "url": "https://example.com/missing.txt",
+                    "offset": 0,
+                }
+            ),
+        )
+
+    with pytest.raises(Exception, match="web fetch failed with status 404"):
+        await toolkit.execute(
+            context=_tool_context(),
+            name="web_grep",
+            input=JsonContent(
+                json={
+                    "url": "https://example.com/missing.txt",
+                    "pattern": "not",
+                    "offset": 0,
+                    "before": None,
+                    "after": None,
+                }
+            ),
+        )
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_and_grep_decode_response_charset(monkeypatch) -> None:
     body = "café\nnaïve target\n"
     fake_response = _FakeResponse(
