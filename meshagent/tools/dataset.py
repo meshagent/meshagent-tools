@@ -1,6 +1,7 @@
 from .tool import LocalRoomTool
 from .toolkit import ToolContext, Toolkit
 from typing import Any, Optional
+import json
 import pyarrow as pa
 from meshagent.api.room_server_client import (
     decode_records,
@@ -13,6 +14,47 @@ from meshagent.tools.strict_schema import ensure_strict_json_schema
 import logging
 
 logger = logging.getLogger("dataset_toolkit")
+
+
+def _render_dataset_prompt_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=str, separators=(",", ":"))
+
+
+def _render_dataset_prompt(prompt: str, row: dict[str, Any]) -> str:
+    rendered = []
+    index = 0
+    while index < len(prompt):
+        char = prompt[index]
+        if char == "{":
+            if index + 1 < len(prompt) and prompt[index + 1] == "{":
+                rendered.append("{")
+                index += 2
+                continue
+            end = prompt.find("}", index + 1)
+            if end == -1:
+                raise ValueError("unmatched '{' in dataset prompt")
+            placeholder = prompt[index + 1 : end]
+            if not placeholder or any(marker in placeholder for marker in "{}[]!.:"):
+                raise ValueError(
+                    f"unsupported dataset prompt placeholder: {placeholder!r}"
+                )
+            if placeholder not in row:
+                raise KeyError(placeholder)
+            rendered.append(_render_dataset_prompt_value(row[placeholder]))
+            index = end + 1
+            continue
+        if char == "}":
+            if index + 1 < len(prompt) and prompt[index + 1] == "}":
+                rendered.append("}")
+                index += 2
+                continue
+            raise ValueError("unmatched '}' in dataset prompt")
+        rendered.append(char)
+        index += 1
+    return "".join(rendered)
+
 
 _EXPRESSION_JSON_SCHEMA = {
     "type": "object",
@@ -620,7 +662,7 @@ class SpawnTaskForEachRow(_DatasetTool):
 
     def make_message(self, *, context: ToolContext, row: dict):
         msg = {
-            "prompt": self.prompt.format(**row),
+            "prompt": _render_dataset_prompt(self.prompt, row),
             "row": row,
         }
 

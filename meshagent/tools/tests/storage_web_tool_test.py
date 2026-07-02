@@ -561,6 +561,17 @@ def test_html_to_markdown_structural_inline_block_edge_cases() -> None:
         ("<output>42</output><p>Next</p>", "42\n\nNext\n"),
         ("<template><p>Hidden</p></template><p>Shown</p>", "Hidden\n\nShown\n"),
         ("<fieldset><legend>L</legend>Tail</fieldset>", "**L**\n\nTail\n"),
+        (
+            '<form><label>Name</label><input value="J"><button>Go</button></form><p>After</p>',
+            "Name\n\nGo\n\nAfter\n",
+        ),
+        ('<input value="J"><input placeholder="P"><textarea>T</textarea>', "T\n"),
+        ("<h1>A</h1><h2>B</h2><h5>E</h5>", "# A\n\n## B\n\n##### E\n"),
+        ("<p>https://example.com a@b.com</p>", "https://example.com a@b.com\n"),
+        (
+            '<div class="ocr_page"><span class="ocrx_word" title="bbox 0 0 10 10">Hi</span></div>',
+            "Hi\n",
+        ),
     ]
     for html, expected in cases:
         assert convert(html) == expected
