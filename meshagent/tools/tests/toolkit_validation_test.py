@@ -2,10 +2,11 @@ import pytest
 from jsonschema import ValidationError as JsonSchemaValidationError
 from datetime import date, datetime, time
 from decimal import Decimal
+from enum import Enum
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, RootModel
 
 import meshagent.tools.toolkit as toolkit_module
 from meshagent.api import ToolContentSpec
@@ -130,6 +131,26 @@ class _AliasPayload(BaseModel):
     count_value: int = Field(alias="countValue")
 
 
+class _ValidationAliasPayload(BaseModel):
+    count_value: int = Field(
+        validation_alias="inputCount", serialization_alias="outputCount"
+    )
+
+
+class _AliasChoicesPayload(BaseModel):
+    count_value: int = Field(
+        validation_alias=AliasChoices("primaryCount", "legacyCount")
+    )
+
+
+class _AliasPathPayload(BaseModel):
+    count_value: int = Field(validation_alias=AliasPath("payload", "count"))
+
+
+class _AliasPathIndexPayload(BaseModel):
+    count_value: int = Field(validation_alias=AliasPath("items", 0, "count"))
+
+
 class _PopulateByNamePayload(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -165,6 +186,35 @@ class _LiteralPayload(BaseModel):
     choice: Literal[1, "1"]
 
 
+class _Color(Enum):
+    RED = "red"
+    BLUE = "blue"
+
+
+class _EnumPayload(BaseModel):
+    color: _Color
+
+
+class _EnumValuesPayload(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
+    color: _Color
+
+
+class _CatPayload(BaseModel):
+    pet_type: Literal["cat"]
+    lives: int
+
+
+class _DogPayload(BaseModel):
+    pet_type: Literal["dog"]
+    bark: bool
+
+
+class _DiscriminatedUnionPayload(BaseModel):
+    pet: Annotated[_CatPayload | _DogPayload, Field(discriminator="pet_type")]
+
+
 class _NestedChildPayload(BaseModel):
     count: Annotated[int, Field(ge=1, le=5)]
     flag: bool
@@ -172,6 +222,20 @@ class _NestedChildPayload(BaseModel):
 
 class _NestedPydanticPayload(BaseModel):
     child: _NestedChildPayload
+
+
+class _NestedAllowExtraChildPayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    count: int
+
+
+class _NestedAllowExtraPayload(BaseModel):
+    child: _NestedAllowExtraChildPayload
+
+
+class _RootListPayload(RootModel[list[int]]):
+    pass
 
 
 class _NestedPydanticListPayload(BaseModel):
@@ -233,6 +297,15 @@ class _StrictFieldPayload(BaseModel):
     loose_enabled: bool
     strict_ratio: Annotated[float, Field(strict=True)]
     loose_ratio: float
+
+
+class _NestedStrictFieldChildPayload(BaseModel):
+    strict_count: Annotated[int, Field(strict=True)]
+    loose_count: int
+
+
+class _NestedStrictFieldPayload(BaseModel):
+    child: _NestedStrictFieldChildPayload
 
 
 class _FormattedPayload(BaseModel):
@@ -534,6 +607,66 @@ class _AliasTool(PydanticTool[_AliasPayload]):
         }
 
 
+class _ValidationAliasTool(PydanticTool[_ValidationAliasPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="validation_alias_values", input_model=_ValidationAliasPayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _ValidationAliasPayload
+    ):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+        }
+
+
+class _AliasChoicesTool(PydanticTool[_AliasChoicesPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="alias_choices_values", input_model=_AliasChoicesPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _AliasChoicesPayload
+    ):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+        }
+
+
+class _AliasPathTool(PydanticTool[_AliasPathPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="alias_path_values", input_model=_AliasPathPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _AliasPathPayload
+    ):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+        }
+
+
+class _AliasPathIndexTool(PydanticTool[_AliasPathIndexPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="alias_path_index_values", input_model=_AliasPathIndexPayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _AliasPathIndexPayload
+    ):
+        del context
+        return {
+            "count_value": arguments.count_value,
+            "count_type": type(arguments.count_value).__name__,
+        }
+
+
 class _PopulateByNameTool(PydanticTool[_PopulateByNamePayload]):
     def __init__(self) -> None:
         super().__init__(
@@ -635,6 +768,60 @@ class _LiteralTool(PydanticTool[_LiteralPayload]):
         }
 
 
+class _EnumTool(PydanticTool[_EnumPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="enum_values", input_model=_EnumPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _EnumPayload):
+        del context
+        return {
+            "color_type": type(arguments.color).__name__,
+            "color_name": arguments.color.name,
+            "color_value": arguments.color.value,
+        }
+
+
+class _EnumValuesTool(PydanticTool[_EnumValuesPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="enum_raw_values", input_model=_EnumValuesPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _EnumValuesPayload
+    ):
+        del context
+        return {
+            "color_type": type(arguments.color).__name__,
+            "color": arguments.color,
+        }
+
+
+class _DiscriminatedUnionTool(PydanticTool[_DiscriminatedUnionPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="discriminated_union_values",
+            input_model=_DiscriminatedUnionPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _DiscriminatedUnionPayload
+    ):
+        del context
+        pet = arguments.pet
+        if isinstance(pet, _CatPayload):
+            return {
+                "pet_type": type(pet).__name__,
+                "tag": pet.pet_type,
+                "lives": pet.lives,
+                "lives_type": type(pet.lives).__name__,
+            }
+        return {
+            "pet_type": type(pet).__name__,
+            "tag": pet.pet_type,
+            "bark": pet.bark,
+            "bark_type": type(pet.bark).__name__,
+        }
+
+
 class _NestedPydanticTool(PydanticTool[_NestedPydanticPayload]):
     def __init__(self) -> None:
         super().__init__(name="nested_pydantic", input_model=_NestedPydanticPayload)
@@ -649,6 +836,32 @@ class _NestedPydanticTool(PydanticTool[_NestedPydanticPayload]):
             "flag": arguments.child.flag,
             "flag_type": type(arguments.child.flag).__name__,
         }
+
+
+class _NestedAllowExtraTool(PydanticTool[_NestedAllowExtraPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="nested_allow_extra", input_model=_NestedAllowExtraPayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _NestedAllowExtraPayload
+    ):
+        del context
+        return {
+            "count": arguments.child.count,
+            "count_type": type(arguments.child.count).__name__,
+            "extras": arguments.child.model_extra,
+        }
+
+
+class _RootListTool(PydanticTool[_RootListPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="root_list_values", input_model=_RootListPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _RootListPayload):
+        del context
+        return {"values": arguments.root}
 
 
 class _NestedPydanticListTool(PydanticTool[_NestedPydanticListPayload]):
@@ -834,6 +1047,25 @@ class _StrictFieldTool(PydanticTool[_StrictFieldPayload]):
             "strict_ratio_type": type(arguments.strict_ratio).__name__,
             "loose_ratio": arguments.loose_ratio,
             "loose_ratio_type": type(arguments.loose_ratio).__name__,
+        }
+
+
+class _NestedStrictFieldTool(PydanticTool[_NestedStrictFieldPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="nested_strict_field_values",
+            input_model=_NestedStrictFieldPayload,
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _NestedStrictFieldPayload
+    ):
+        del context
+        return {
+            "strict_count": arguments.child.strict_count,
+            "strict_count_type": type(arguments.child.strict_count).__name__,
+            "loose_count": arguments.child.loose_count,
+            "loose_count_type": type(arguments.child.loose_count).__name__,
         }
 
 
@@ -1743,6 +1975,159 @@ async def test_pydantic_tool_content_types_mode_uses_alias_field_names() -> None
 
 
 @pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_uses_validation_aliases() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_ValidationAliasTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="validation_alias_values",
+        input=JsonContent(json={"inputCount": "3"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"count_value": 3, "count_type": "int"}
+
+    both_result = await toolkit.invoke(
+        context=context,
+        name="validation_alias_values",
+        input=JsonContent(json={"inputCount": "3", "count_value": "4"}),
+    )
+
+    assert isinstance(both_result, JsonContent)
+    assert both_result.json == {"count_value": 3, "count_type": "int"}
+
+    for input_json in ({"count_value": "4"}, {"outputCount": "4"}):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="validation_alias_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_uses_alias_choices() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_AliasChoicesTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    primary_result = await toolkit.invoke(
+        context=context,
+        name="alias_choices_values",
+        input=JsonContent(json={"primaryCount": "3"}),
+    )
+    assert isinstance(primary_result, JsonContent)
+    assert primary_result.json == {"count_value": 3, "count_type": "int"}
+
+    legacy_result = await toolkit.invoke(
+        context=context,
+        name="alias_choices_values",
+        input=JsonContent(json={"legacyCount": "4"}),
+    )
+    assert isinstance(legacy_result, JsonContent)
+    assert legacy_result.json == {"count_value": 4, "count_type": "int"}
+
+    both_result = await toolkit.invoke(
+        context=context,
+        name="alias_choices_values",
+        input=JsonContent(json={"primaryCount": "3", "legacyCount": "4"}),
+    )
+    assert isinstance(both_result, JsonContent)
+    assert both_result.json == {"count_value": 3, "count_type": "int"}
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="alias_choices_values",
+            input=JsonContent(json={"count_value": "5"}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_uses_alias_paths() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_AliasPathTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="alias_path_values",
+        input=JsonContent(json={"payload": {"count": "3"}}),
+    )
+    assert isinstance(result, JsonContent)
+    assert result.json == {"count_value": 3, "count_type": "int"}
+
+    path_wins_result = await toolkit.invoke(
+        context=context,
+        name="alias_path_values",
+        input=JsonContent(json={"payload": {"count": "3"}, "count_value": "4"}),
+    )
+    assert isinstance(path_wins_result, JsonContent)
+    assert path_wins_result.json == {"count_value": 3, "count_type": "int"}
+
+    for input_json in (
+        {"count_value": "4"},
+        {"payload": {}},
+        {"payload": {"count": "bad"}},
+    ):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="alias_path_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_uses_alias_path_indexes() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_AliasPathIndexTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="alias_path_index_values",
+        input=JsonContent(json={"items": [{"count": "3"}]}),
+    )
+    assert isinstance(result, JsonContent)
+    assert result.json == {"count_value": 3, "count_type": "int"}
+
+    path_wins_result = await toolkit.invoke(
+        context=context,
+        name="alias_path_index_values",
+        input=JsonContent(json={"items": [{"count": "3"}], "count_value": "4"}),
+    )
+    assert isinstance(path_wins_result, JsonContent)
+    assert path_wins_result.json == {"count_value": 3, "count_type": "int"}
+
+    for input_json in (
+        {"count_value": "4"},
+        {"items": []},
+        {"items": [{"count": "bad"}]},
+    ):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="alias_path_index_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
 async def test_pydantic_tool_content_types_mode_populates_aliases_by_name() -> None:
     toolkit = Toolkit(
         name="test",
@@ -1942,6 +2327,99 @@ async def test_pydantic_tool_content_types_mode_preserves_literal_exactness() ->
 
 
 @pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_preserves_enum_behavior() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_EnumTool(), _EnumValuesTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    enum_result = await toolkit.invoke(
+        context=context,
+        name="enum_values",
+        input=JsonContent(json={"color": "red"}),
+    )
+
+    assert isinstance(enum_result, JsonContent)
+    assert enum_result.json == {
+        "color_type": "_Color",
+        "color_name": "RED",
+        "color_value": "red",
+    }
+
+    raw_result = await toolkit.invoke(
+        context=context,
+        name="enum_raw_values",
+        input=JsonContent(json={"color": "red"}),
+    )
+
+    assert isinstance(raw_result, JsonContent)
+    assert raw_result.json == {"color_type": "str", "color": "red"}
+
+    for name in ("enum_values", "enum_raw_values"):
+        for bad_color in ("RED", 1):
+            with pytest.raises(Exception):
+                await toolkit.invoke(
+                    context=context,
+                    name=name,
+                    input=JsonContent(json={"color": bad_color}),
+                )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_coerces_discriminated_unions() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_DiscriminatedUnionTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    cat_result = await toolkit.invoke(
+        context=context,
+        name="discriminated_union_values",
+        input=JsonContent(json={"pet": {"pet_type": "cat", "lives": "9"}}),
+    )
+
+    assert isinstance(cat_result, JsonContent)
+    assert cat_result.json == {
+        "pet_type": "_CatPayload",
+        "tag": "cat",
+        "lives": 9,
+        "lives_type": "int",
+    }
+
+    dog_result = await toolkit.invoke(
+        context=context,
+        name="discriminated_union_values",
+        input=JsonContent(json={"pet": {"pet_type": "dog", "bark": "yes"}}),
+    )
+
+    assert isinstance(dog_result, JsonContent)
+    assert dog_result.json == {
+        "pet_type": "_DogPayload",
+        "tag": "dog",
+        "bark": True,
+        "bark_type": "bool",
+    }
+
+    invalid_inputs = [
+        {"pet": {"pet_type": "cat", "bark": True}},
+        {"pet": {"pet_type": "dog", "lives": 9}},
+        {"pet": {"pet_type": "bird", "lives": 1}},
+        {"pet": {"lives": 1}},
+    ]
+    for input_json in invalid_inputs:
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="discriminated_union_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
 async def test_pydantic_tool_none_mode_still_runs_model_validation() -> None:
     toolkit = Toolkit(
         name="test",
@@ -2014,6 +2492,66 @@ async def test_pydantic_tool_content_types_mode_coerces_nested_ref_model() -> No
             context=context,
             name="nested_pydantic",
             input=JsonContent(json={"child": {"count": "10", "flag": "yes"}}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_preserves_nested_allowed_extra() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_NestedAllowExtraTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="nested_allow_extra",
+        input=JsonContent(json={"child": {"count": "3", "extra": "raw"}}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "count": 3,
+        "count_type": "int",
+        "extras": {"extra": "raw"},
+    }
+
+    for input_json in (
+        {"child": {"count": "bad", "extra": "raw"}},
+        {"child": {"extra": "raw"}},
+    ):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="nested_allow_extra",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_preserves_root_model_boundary() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_RootListTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    with pytest.raises(Exception, match="requires JSON object input"):
+        await toolkit.invoke(
+            context=context,
+            name="root_list_values",
+            input=JsonContent(json=[1, "2"]),
+        )
+
+    with pytest.raises(Exception, match="Input should be a valid list"):
+        await toolkit.invoke(
+            context=context,
+            name="root_list_values",
+            input=JsonContent(json={}),
         )
 
 
@@ -2407,6 +2945,42 @@ async def test_pydantic_tool_content_types_mode_respects_strict_fields() -> None
             await toolkit.invoke(
                 context=context,
                 name="strict_field_values",
+                input=JsonContent(json=input_json),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_respects_nested_strict_fields() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_NestedStrictFieldTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="nested_strict_field_values",
+        input=JsonContent(json={"child": {"strict_count": 3, "loose_count": "4"}}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "strict_count": 3,
+        "strict_count_type": "int",
+        "loose_count": 4,
+        "loose_count_type": "int",
+    }
+
+    invalid_inputs = [
+        {"child": {"strict_count": "3", "loose_count": "4"}},
+        {"child": {"strict_count": True, "loose_count": "4"}},
+    ]
+    for input_json in invalid_inputs:
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="nested_strict_field_values",
                 input=JsonContent(json=input_json),
             )
 
