@@ -886,14 +886,16 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
             "price": pa.decimal128(12, 4),
             "payload": pa.binary(),
         },
-        prompt="{payload.hex.__name__}|{payload.hex.__qualname__}|{payload.hex.__self__}|{payload.hex.__self__.__class__.__name__}|{event_date.isoformat.__name__}|{event_date.isoformat.__qualname__}|{event_date.isoformat.__self__}|{event_date.isoformat.__self__.__class__.__name__}|{created_at.isoformat.__name__}|{created_at.isoformat.__qualname__}|{created_at.isoformat.__self__}|{created_at.isoformat.__self__.__class__.__name__}|{price.as_tuple.__name__}|{price.as_tuple.__qualname__}|{price.as_tuple.__self__}|{price.as_tuple.__self__.__class__.__name__}",
+        prompt="{payload.hex.__name__}|{payload.hex.__qualname__}|{payload.hex.__self__}|{payload.hex.__self__.__class__.__name__}|{event_date.isoformat.__name__}|{event_date.isoformat.__qualname__}|{event_date.isoformat.__self__}|{event_date.isoformat.__self__.__class__.__name__}|{event_date.strftime.__name__}|{event_date.strftime.__qualname__}|{event_date.strftime.__self__}|{event_date.strftime.__self__.__class__.__name__}|{created_at.isoformat.__name__}|{created_at.isoformat.__qualname__}|{created_at.isoformat.__self__}|{created_at.isoformat.__self__.__class__.__name__}|{created_at.strftime.__name__}|{created_at.strftime.__qualname__}|{created_at.strftime.__self__}|{created_at.strftime.__self__.__class__.__name__}|{price.as_tuple.__name__}|{price.as_tuple.__qualname__}|{price.as_tuple.__self__}|{price.as_tuple.__self__.__class__.__name__}|{price.adjusted.__name__}|{price.adjusted.__qualname__}|{price.adjusted.__self__}|{price.adjusted.__self__.__class__.__name__}",
         queue="jobs",
     )
     assert method_tool.make_message(context=_tool_context(room), row=row)["prompt"] == (
         "hex|bytes.hex|b'\\x00\\x01\\xfa\\xff'|bytes|isoformat|"
-        "date.isoformat|2026-04-09|date|isoformat|datetime.isoformat|"
-        "2026-04-09 12:30:45.123456+00:00|datetime|as_tuple|"
-        "Decimal.as_tuple|1234.5600|Decimal"
+        "date.isoformat|2026-04-09|date|strftime|date.strftime|2026-04-09|"
+        "date|isoformat|datetime.isoformat|2026-04-09 12:30:45.123456+00:00|"
+        "datetime|strftime|datetime.strftime|2026-04-09 12:30:45.123456+00:00|"
+        "datetime|as_tuple|Decimal.as_tuple|1234.5600|Decimal|adjusted|"
+        "Decimal.adjusted|1234.5600|Decimal"
     )
 
     class_error_tool = SpawnTaskForEachRow(
@@ -956,6 +958,21 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
             "{created_at.tzinfo.key}",
             AttributeError,
             "'UTC' object has no attribute 'key'",
+        ),
+        (
+            "{price.adjusted[0]}",
+            TypeError,
+            "'builtin_function_or_method' object is not subscriptable",
+        ),
+        (
+            "{price.adjusted.foo}",
+            AttributeError,
+            "'builtin_function_or_method' object has no attribute 'foo'",
+        ),
+        (
+            "{event_date.strftime:>8}",
+            TypeError,
+            "unsupported format string passed to builtin_function_or_method.__format__",
         ),
     ],
 )
