@@ -1,8 +1,11 @@
 import pytest
 from jsonschema import ValidationError as JsonSchemaValidationError
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Annotated, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 import meshagent.tools.toolkit as toolkit_module
 from meshagent.api import ToolContentSpec
@@ -81,13 +84,37 @@ class _BoolIntUnionPayload(BaseModel):
     value: bool | int
 
 
+class _IntBoolUnionPayload(BaseModel):
+    value: int | bool
+
+
+class _BoolStrUnionPayload(BaseModel):
+    value: bool | str
+
+
 class _UnionListPayload(BaseModel):
     values: list[int | str]
+
+
+class _ConstrainedListPayload(BaseModel):
+    values: Annotated[list[int], Field(min_length=2, max_length=3)]
+
+
+class _SetPayload(BaseModel):
+    values: set[int]
+
+
+class _FrozenSetPayload(BaseModel):
+    values: frozenset[int]
 
 
 class _DictPayload(BaseModel):
     counts: dict[str, int]
     values: dict[str, int | str]
+
+
+class _ConstrainedDictPayload(BaseModel):
+    values: Annotated[dict[str, int], Field(min_length=1, max_length=2)]
 
 
 class _PatternDictPayload(BaseModel):
@@ -102,6 +129,11 @@ class _TuplePayload(BaseModel):
 class _ConstrainedPayload(BaseModel):
     count: Annotated[int, Field(ge=1, le=5)]
     ratio: Annotated[float, Field(gt=0, lt=2)]
+
+
+class _MultipleOfPayload(BaseModel):
+    count: Annotated[int, Field(multiple_of=3)]
+    ratio: Annotated[float, Field(multiple_of=0.5)]
 
 
 class _LiteralPayload(BaseModel):
@@ -141,6 +173,39 @@ class _NestedDefaultPayload(BaseModel):
 
 class _NestedDefaultListPayload(BaseModel):
     items: list[_NestedDefaultChildPayload]
+
+
+class _ForbidExtraPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    count: int
+
+
+class _FormattedPayload(BaseModel):
+    day: date
+    moment: datetime
+    clock: time
+    ident: UUID
+
+
+class _TimeEdgePayload(BaseModel):
+    clock: time
+
+
+class _NaiveDatetimePayload(BaseModel):
+    moment: datetime
+
+
+class _DecimalPayload(BaseModel):
+    amount: Decimal
+
+
+class _StringPayload(BaseModel):
+    value: str
+
+
+class _ConstrainedStringPayload(BaseModel):
+    code: Annotated[str, Field(min_length=2, max_length=4, pattern="^x[0-9]+$")]
 
 
 class _NestedPayloadTool(FunctionTool):
@@ -231,6 +296,28 @@ class _BoolIntUnionTool(PydanticTool[_BoolIntUnionPayload]):
         return {"type": type(arguments.value).__name__, "value": arguments.value}
 
 
+class _IntBoolUnionTool(PydanticTool[_IntBoolUnionPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="int_bool_union", input_model=_IntBoolUnionPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _IntBoolUnionPayload
+    ):
+        del context
+        return {"type": type(arguments.value).__name__, "value": arguments.value}
+
+
+class _BoolStrUnionTool(PydanticTool[_BoolStrUnionPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="bool_str_union", input_model=_BoolStrUnionPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _BoolStrUnionPayload
+    ):
+        del context
+        return {"type": type(arguments.value).__name__, "value": arguments.value}
+
+
 class _UnionListTool(PydanticTool[_UnionListPayload]):
     def __init__(self) -> None:
         super().__init__(name="union_list", input_model=_UnionListPayload)
@@ -242,6 +329,51 @@ class _UnionListTool(PydanticTool[_UnionListPayload]):
         return {
             "types": [type(value).__name__ for value in arguments.values],
             "values": arguments.values,
+        }
+
+
+class _ConstrainedListTool(PydanticTool[_ConstrainedListPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="constrained_list_values", input_model=_ConstrainedListPayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _ConstrainedListPayload
+    ):
+        del context
+        return {
+            "types": [type(value).__name__ for value in arguments.values],
+            "values": arguments.values,
+        }
+
+
+class _SetTool(PydanticTool[_SetPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="set_values", input_model=_SetPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _SetPayload):
+        del context
+        values = sorted(arguments.values)
+        return {
+            "types": [type(value).__name__ for value in values],
+            "values": values,
+        }
+
+
+class _FrozenSetTool(PydanticTool[_FrozenSetPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="frozenset_values", input_model=_FrozenSetPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _FrozenSetPayload
+    ):
+        del context
+        values = sorted(arguments.values)
+        return {
+            "type": type(arguments.values).__name__,
+            "types": [type(value).__name__ for value in values],
+            "values": values,
         }
 
 
@@ -257,6 +389,24 @@ class _DictTool(PydanticTool[_DictPayload]):
             },
             "counts": arguments.counts,
             "value_types": {
+                key: type(value).__name__ for key, value in arguments.values.items()
+            },
+            "values": arguments.values,
+        }
+
+
+class _ConstrainedDictTool(PydanticTool[_ConstrainedDictPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="constrained_dict_values", input_model=_ConstrainedDictPayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _ConstrainedDictPayload
+    ):
+        del context
+        return {
+            "types": {
                 key: type(value).__name__ for key, value in arguments.values.items()
             },
             "values": arguments.values,
@@ -299,6 +449,22 @@ class _ConstrainedTool(PydanticTool[_ConstrainedPayload]):
 
     async def execute_model(
         self, *, context: ToolContext, arguments: _ConstrainedPayload
+    ):
+        del context
+        return {
+            "count": arguments.count,
+            "count_type": type(arguments.count).__name__,
+            "ratio": arguments.ratio,
+            "ratio_type": type(arguments.ratio).__name__,
+        }
+
+
+class _MultipleOfTool(PydanticTool[_MultipleOfPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="multiple_of_values", input_model=_MultipleOfPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _MultipleOfPayload
     ):
         del context
         return {
@@ -420,6 +586,111 @@ class _NestedDefaultListTool(PydanticTool[_NestedDefaultListPayload]):
                 }
                 for item in arguments.items
             ]
+        }
+
+
+class _ForbidExtraTool(PydanticTool[_ForbidExtraPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="forbid_extra", input_model=_ForbidExtraPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _ForbidExtraPayload
+    ):
+        del context
+        return {
+            "count": arguments.count,
+            "count_type": type(arguments.count).__name__,
+        }
+
+
+class _FormattedTool(PydanticTool[_FormattedPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="formatted_values", input_model=_FormattedPayload)
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _FormattedPayload
+    ):
+        del context
+        return {
+            "day_type": type(arguments.day).__name__,
+            "day": arguments.day.isoformat(),
+            "moment_type": type(arguments.moment).__name__,
+            "moment": arguments.moment.isoformat(),
+            "clock_type": type(arguments.clock).__name__,
+            "clock": arguments.clock.isoformat(),
+            "ident_type": type(arguments.ident).__name__,
+            "ident": str(arguments.ident),
+        }
+
+
+class _TimeEdgeTool(PydanticTool[_TimeEdgePayload]):
+    def __init__(self) -> None:
+        super().__init__(name="time_edge_values", input_model=_TimeEdgePayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _TimeEdgePayload):
+        del context
+        return {
+            "clock_type": type(arguments.clock).__name__,
+            "clock": arguments.clock.isoformat(),
+        }
+
+
+class _NaiveDatetimeTool(PydanticTool[_NaiveDatetimePayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="naive_datetime_values", input_model=_NaiveDatetimePayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _NaiveDatetimePayload
+    ):
+        del context
+        return {
+            "moment_type": type(arguments.moment).__name__,
+            "moment": arguments.moment.isoformat(),
+            "tzinfo": None
+            if arguments.moment.tzinfo is None
+            else str(arguments.moment.tzinfo),
+        }
+
+
+class _DecimalTool(PydanticTool[_DecimalPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="decimal_values", input_model=_DecimalPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _DecimalPayload):
+        del context
+        return {
+            "amount_type": type(arguments.amount).__name__,
+            "amount": str(arguments.amount),
+        }
+
+
+class _StringTool(PydanticTool[_StringPayload]):
+    def __init__(self) -> None:
+        super().__init__(name="string_values", input_model=_StringPayload)
+
+    async def execute_model(self, *, context: ToolContext, arguments: _StringPayload):
+        del context
+        return {
+            "value_type": type(arguments.value).__name__,
+            "value": arguments.value,
+        }
+
+
+class _ConstrainedStringTool(PydanticTool[_ConstrainedStringPayload]):
+    def __init__(self) -> None:
+        super().__init__(
+            name="constrained_string_values", input_model=_ConstrainedStringPayload
+        )
+
+    async def execute_model(
+        self, *, context: ToolContext, arguments: _ConstrainedStringPayload
+    ):
+        del context
+        return {
+            "code_type": type(arguments.code).__name__,
+            "code": arguments.code,
         }
 
 
@@ -825,6 +1096,54 @@ async def test_pydantic_tool_content_types_mode_uses_first_coercible_union_branc
 
 
 @pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_preserves_union_exact_bool_and_string() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_IntBoolUnionTool(), _BoolStrUnionTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    exact_bool_result = await toolkit.invoke(
+        context=context,
+        name="int_bool_union",
+        input=JsonContent(json={"value": True}),
+    )
+
+    assert isinstance(exact_bool_result, JsonContent)
+    assert exact_bool_result.json == {"type": "bool", "value": True}
+
+    int_bool_string_result = await toolkit.invoke(
+        context=context,
+        name="int_bool_union",
+        input=JsonContent(json={"value": "1"}),
+    )
+
+    assert isinstance(int_bool_string_result, JsonContent)
+    assert int_bool_string_result.json == {"type": "int", "value": 1}
+
+    exact_string_result = await toolkit.invoke(
+        context=context,
+        name="bool_str_union",
+        input=JsonContent(json={"value": "true"}),
+    )
+
+    assert isinstance(exact_string_result, JsonContent)
+    assert exact_string_result.json == {"type": "str", "value": "true"}
+
+    bool_str_number_result = await toolkit.invoke(
+        context=context,
+        name="bool_str_union",
+        input=JsonContent(json={"value": 1}),
+    )
+
+    assert isinstance(bool_str_number_result, JsonContent)
+    assert bool_str_number_result.json == {"type": "bool", "value": True}
+
+
+@pytest.mark.asyncio
 async def test_pydantic_tool_content_types_mode_applies_union_rules_in_arrays() -> None:
     toolkit = Toolkit(
         name="test",
@@ -841,6 +1160,120 @@ async def test_pydantic_tool_content_types_mode_applies_union_rules_in_arrays() 
 
     assert isinstance(result, JsonContent)
     assert result.json == {"types": ["str", "int"], "values": ["2", 2]}
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_validates_list_constraints() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_ConstrainedListTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    for values, expected in [
+        (["1", 2], [1, 2]),
+        (["1", "2", "3"], [1, 2, 3]),
+    ]:
+        result = await toolkit.invoke(
+            context=context,
+            name="constrained_list_values",
+            input=JsonContent(json={"values": values}),
+        )
+
+        assert isinstance(result, JsonContent)
+        assert result.json == {
+            "types": ["int" for _ in expected],
+            "values": expected,
+        }
+
+    for bad_values in ([1], [1, 2, 3, 4], ["x", 2], "12"):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="constrained_list_values",
+                input=JsonContent(json={"values": bad_values}),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_dedupes_sets_after_item_coercion() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_SetTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="set_values",
+        input=JsonContent(json={"values": ["1", 1, 2]}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"types": ["int", "int"], "values": [1, 2]}
+
+    empty_result = await toolkit.invoke(
+        context=context,
+        name="set_values",
+        input=JsonContent(json={"values": []}),
+    )
+
+    assert isinstance(empty_result, JsonContent)
+    assert empty_result.json == {"types": [], "values": []}
+
+    for bad_values in (["x"], "12"):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="set_values",
+                input=JsonContent(json={"values": bad_values}),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_dedupes_frozensets_after_item_coercion() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_FrozenSetTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="frozenset_values",
+        input=JsonContent(json={"values": ["1", 1, 2]}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "type": "frozenset",
+        "types": ["int", "int"],
+        "values": [1, 2],
+    }
+
+    empty_result = await toolkit.invoke(
+        context=context,
+        name="frozenset_values",
+        input=JsonContent(json={"values": []}),
+    )
+
+    assert isinstance(empty_result, JsonContent)
+    assert empty_result.json == {"type": "frozenset", "types": [], "values": []}
+
+    for bad_values in (["x"], "12"):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="frozenset_values",
+                input=JsonContent(json={"values": bad_values}),
+            )
 
 
 @pytest.mark.asyncio
@@ -870,6 +1303,40 @@ async def test_pydantic_tool_content_types_mode_coerces_dict_values() -> None:
         "value_types": {"x": "str", "y": "int"},
         "values": {"x": "4", "y": 5},
     }
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_validates_dict_constraints() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_ConstrainedDictTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    for values, expected in [
+        ({"a": "1"}, {"a": 1}),
+        ({"a": "1", "b": 2}, {"a": 1, "b": 2}),
+    ]:
+        result = await toolkit.invoke(
+            context=context,
+            name="constrained_dict_values",
+            input=JsonContent(json={"values": values}),
+        )
+
+        assert isinstance(result, JsonContent)
+        assert result.json == {
+            "types": {key: "int" for key in expected},
+            "values": expected,
+        }
+
+    for bad_values in ({}, {"a": 1, "b": 2, "c": 3}, {"a": "x"}, [["a", 1]]):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="constrained_dict_values",
+                input=JsonContent(json={"values": bad_values}),
+            )
 
 
 @pytest.mark.asyncio
@@ -947,6 +1414,42 @@ async def test_pydantic_tool_content_types_mode_coerces_constrained_numbers() ->
             name="constrained_values",
             input=JsonContent(json={"count": "10", "ratio": "1.5"}),
         )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_validates_multiple_of_numbers() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_MultipleOfTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="multiple_of_values",
+        input=JsonContent(json={"count": "6", "ratio": "1.5"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "count": 6,
+        "count_type": "int",
+        "ratio": 1.5,
+        "ratio_type": "float",
+    }
+
+    for payload in (
+        {"count": "7", "ratio": "1.5"},
+        {"count": "6", "ratio": "1.25"},
+        {"count": "x", "ratio": "1.5"},
+    ):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="multiple_of_values",
+                input=JsonContent(json=payload),
+            )
 
 
 @pytest.mark.asyncio
@@ -1236,6 +1739,377 @@ async def test_pydantic_tool_content_types_mode_applies_nested_model_list_defaul
             name="nested_default_list_values",
             input=JsonContent(json={}),
         )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_rejects_forbidden_extra_fields() -> (
+    None
+):
+    toolkit = Toolkit(
+        name="test",
+        tools=[_ForbidExtraTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="forbid_extra",
+        input=JsonContent(json={"count": "2"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"count": 2, "count_type": "int"}
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="forbid_extra",
+            input=JsonContent(json={"count": "2", "extra": 1}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_parses_formatted_scalars() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_FormattedTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="formatted_values",
+        input=JsonContent(
+            json={
+                "day": "2026-07-02",
+                "moment": "2026-07-02T03:04:05Z",
+                "clock": "03:04:05",
+                "ident": "12345678-1234-5678-1234-567812345678",
+            }
+        ),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "day_type": "date",
+        "day": "2026-07-02",
+        "moment_type": "datetime",
+        "moment": "2026-07-02T03:04:05+00:00",
+        "clock_type": "time",
+        "clock": "03:04:05",
+        "ident_type": "UUID",
+        "ident": "12345678-1234-5678-1234-567812345678",
+    }
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="formatted_values",
+            input=JsonContent(
+                json={
+                    "day": "not-a-date",
+                    "moment": "2026-07-02T03:04:05Z",
+                    "clock": "03:04:05",
+                    "ident": "12345678-1234-5678-1234-567812345678",
+                }
+            ),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "day",
+    [
+        "2026-07-02T00:00:00",
+        "2026-07-02T00:00:00Z",
+        1782950400,
+        1782950400.0,
+        "1782950400",
+    ],
+)
+async def test_pydantic_tool_content_types_mode_coerces_date_edges(
+    day: object,
+) -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_FormattedTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="formatted_values",
+        input=JsonContent(
+            json={
+                "day": day,
+                "moment": "2026-07-02T03:04:05Z",
+                "clock": "03:04:05",
+                "ident": "12345678-1234-5678-1234-567812345678",
+            }
+        ),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json["day"] == "2026-07-02"
+    assert result.json["day_type"] == "date"
+
+    for bad_day in ("2026-07-02T12:00:00Z", True):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="formatted_values",
+                input=JsonContent(
+                    json={
+                        "day": bad_day,
+                        "moment": "2026-07-02T03:04:05Z",
+                        "clock": "03:04:05",
+                        "ident": "12345678-1234-5678-1234-567812345678",
+                    }
+                ),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_coerces_time_without_seconds() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_FormattedTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="formatted_values",
+        input=JsonContent(
+            json={
+                "day": "2026-07-02",
+                "moment": "2026-07-02T03:04:05Z",
+                "clock": "03:04",
+                "ident": "12345678-1234-5678-1234-567812345678",
+            }
+        ),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json["clock"] == "03:04:00"
+    assert result.json["clock_type"] == "time"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("clock", "expected"),
+    [
+        ("03:04:05Z", "03:04:05+00:00"),
+        ("03:04:05+00:00", "03:04:05+00:00"),
+        ("03:04:05.123456Z", "03:04:05.123456+00:00"),
+        (11045, "03:04:05+00:00"),
+        (11045.123456, "03:04:05.123456+00:00"),
+    ],
+)
+async def test_pydantic_tool_content_types_mode_coerces_time_offsets_and_seconds(
+    clock: object,
+    expected: str,
+) -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_TimeEdgeTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="time_edge_values",
+        input=JsonContent(json={"clock": clock}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"clock_type": "time", "clock": expected}
+
+    for bad_clock in (86400, -1, "11045"):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="time_edge_values",
+                input=JsonContent(json={"clock": bad_clock}),
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("moment", "expected"),
+    [
+        (1782961445, "2026-07-02T03:04:05+00:00"),
+        (1782961445.123456, "2026-07-02T03:04:05.123456+00:00"),
+        ("1782961445", "2026-07-02T03:04:05+00:00"),
+    ],
+)
+async def test_pydantic_tool_content_types_mode_coerces_datetime_timestamps(
+    moment: object,
+    expected: str,
+) -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_FormattedTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="formatted_values",
+        input=JsonContent(
+            json={
+                "day": "2026-07-02",
+                "moment": moment,
+                "clock": "03:04:05",
+                "ident": "12345678-1234-5678-1234-567812345678",
+            }
+        ),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json["moment"] == expected
+    assert result.json["moment_type"] == "datetime"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("moment", "expected"),
+    [
+        ("2026-07-02 03:04:05", "2026-07-02T03:04:05"),
+        ("2026-07-02 03:04:05.123456", "2026-07-02T03:04:05.123456"),
+        ("2026-07-02T03:04:05", "2026-07-02T03:04:05"),
+        ("2026-07-02T03:04:05.123456", "2026-07-02T03:04:05.123456"),
+    ],
+)
+async def test_pydantic_tool_content_types_mode_preserves_naive_datetimes(
+    moment: str,
+    expected: str,
+) -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_NaiveDatetimeTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="naive_datetime_values",
+        input=JsonContent(json={"moment": moment}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "moment_type": "datetime",
+        "moment": expected,
+        "tzinfo": None,
+    }
+
+    with pytest.raises(Exception):
+        await toolkit.invoke(
+            context=context,
+            name="naive_datetime_values",
+            input=JsonContent(json={"moment": "not-a-datetime"}),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"amount": "12.30"}, {"amount_type": "Decimal", "amount": "12.30"}),
+        ({"amount": 12.3}, {"amount_type": "Decimal", "amount": "12.3"}),
+        ({"amount": 12}, {"amount_type": "Decimal", "amount": "12"}),
+    ],
+)
+async def test_pydantic_tool_content_types_mode_parses_decimal_scalars(
+    payload: dict[str, object],
+    expected: dict[str, str],
+) -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_DecimalTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="decimal_values",
+        input=JsonContent(json=payload),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == expected
+
+    for bad_amount in ("NaN", "Infinity"):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="decimal_values",
+                input=JsonContent(json={"amount": bad_amount}),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_preserves_string_exactness() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_StringTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="string_values",
+        input=JsonContent(json={"value": "alpha"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"value_type": "str", "value": "alpha"}
+
+    for bad_value in (2, 2.5, True, None):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="string_values",
+                input=JsonContent(json={"value": bad_value}),
+            )
+
+
+@pytest.mark.asyncio
+async def test_pydantic_tool_content_types_mode_validates_string_constraints() -> None:
+    toolkit = Toolkit(
+        name="test",
+        tools=[_ConstrainedStringTool()],
+        validation_mode="content_types",
+    )
+    context = ToolContext(caller=object())
+
+    for code in ("x1", "x123"):
+        result = await toolkit.invoke(
+            context=context,
+            name="constrained_string_values",
+            input=JsonContent(json={"code": code}),
+        )
+
+        assert isinstance(result, JsonContent)
+        assert result.json == {"code_type": "str", "code": code}
+
+    for bad_code in ("x", "x1234", "y12", 12):
+        with pytest.raises(Exception):
+            await toolkit.invoke(
+                context=context,
+                name="constrained_string_values",
+                input=JsonContent(json={"code": bad_code}),
+            )
 
 
 @pytest.mark.asyncio
