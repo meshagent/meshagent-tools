@@ -1072,16 +1072,19 @@ def test_spawn_task_for_each_row_prompt_format_uses_pyarrow_to_pylist_scalars() 
             "price": pa.decimal128(12, 4),
             "payload": pa.binary(),
         },
-        prompt="{payload.hex.__name__}|{payload.hex.__qualname__}|{payload.hex.__self__}|{payload.hex.__self__.__class__.__name__}|{event_date.isoformat.__name__}|{event_date.isoformat.__qualname__}|{event_date.isoformat.__self__}|{event_date.isoformat.__self__.__class__.__name__}|{event_date.strftime.__name__}|{event_date.strftime.__qualname__}|{event_date.strftime.__self__}|{event_date.strftime.__self__.__class__.__name__}|{created_at.isoformat.__name__}|{created_at.isoformat.__qualname__}|{created_at.isoformat.__self__}|{created_at.isoformat.__self__.__class__.__name__}|{created_at.strftime.__name__}|{created_at.strftime.__qualname__}|{created_at.strftime.__self__}|{created_at.strftime.__self__.__class__.__name__}|{price.as_tuple.__name__}|{price.as_tuple.__qualname__}|{price.as_tuple.__self__}|{price.as_tuple.__self__.__class__.__name__}|{price.adjusted.__name__}|{price.adjusted.__qualname__}|{price.adjusted.__self__}|{price.adjusted.__self__.__class__.__name__}",
+        prompt="{payload.hex.__name__}|{payload.hex.__qualname__}|{payload.hex.__self__}|{payload.hex.__self__.__class__.__name__}|{payload.hex.__class__.__name__}|{payload.hex.__class__.__base__.__name__}|{event_date.isoformat.__name__}|{event_date.isoformat.__qualname__}|{event_date.isoformat.__self__}|{event_date.isoformat.__self__.__class__.__name__}|{event_date.isoformat.__class__.__name__}|{event_date.strftime.__name__}|{event_date.strftime.__qualname__}|{event_date.strftime.__self__}|{event_date.strftime.__self__.__class__.__name__}|{created_at.isoformat.__name__}|{created_at.isoformat.__qualname__}|{created_at.isoformat.__self__}|{created_at.isoformat.__self__.__class__.__name__}|{created_at.strftime.__name__}|{created_at.strftime.__qualname__}|{created_at.strftime.__self__}|{created_at.strftime.__self__.__class__.__name__}|{created_at.strftime.__class__.__base__.__name__}|{price.as_tuple.__name__}|{price.as_tuple.__qualname__}|{price.as_tuple.__self__}|{price.as_tuple.__self__.__class__.__name__}|{price.adjusted.__name__}|{price.adjusted.__qualname__}|{price.adjusted.__self__}|{price.adjusted.__self__.__class__.__name__}|{price.adjusted.__class__.__mro__}",
         queue="jobs",
     )
     assert method_tool.make_message(context=_tool_context(room), row=row)["prompt"] == (
-        "hex|bytes.hex|b'\\x00\\x01\\xfa\\xff'|bytes|isoformat|"
-        "date.isoformat|2026-04-09|date|strftime|date.strftime|2026-04-09|"
+        "hex|bytes.hex|b'\\x00\\x01\\xfa\\xff'|bytes|"
+        "builtin_function_or_method|object|isoformat|date.isoformat|"
+        "2026-04-09|date|builtin_function_or_method|strftime|"
+        "date.strftime|2026-04-09|"
         "date|isoformat|datetime.isoformat|2026-04-09 12:30:45.123456+00:00|"
         "datetime|strftime|datetime.strftime|2026-04-09 12:30:45.123456+00:00|"
-        "datetime|as_tuple|Decimal.as_tuple|1234.5600|Decimal|adjusted|"
-        "Decimal.adjusted|1234.5600|Decimal"
+        "datetime|object|as_tuple|Decimal.as_tuple|1234.5600|Decimal|adjusted|"
+        "Decimal.adjusted|1234.5600|Decimal|"
+        "(<class 'builtin_function_or_method'>, <class 'object'>)"
     )
 
     class_error_tool = SpawnTaskForEachRow(
@@ -1638,6 +1641,22 @@ def test_spawn_task_for_each_row_prompt_format_float_z_sign_matches_python() -> 
     }
 
 
+def test_spawn_task_for_each_row_prompt_format_adjacent_braces_match_python() -> None:
+    room = _FakeRoom()
+    tool = SpawnTaskForEachRow(
+        room=room,
+        table="users",
+        schema={"name": pa.string()},
+        prompt="{{{name}}}|{{{name}",
+        queue="jobs",
+    )
+
+    assert tool.make_message(context=_tool_context(room), row={"name": "Alice"}) == {
+        "prompt": "{Alice}|{Alice",
+        "row": {"name": "Alice"},
+    }
+
+
 @pytest.mark.parametrize("prompt", ["{}", "{01}", "{[id]}"])
 def test_spawn_task_for_each_row_prompt_format_positional_fields_use_python_errors(
     prompt: str,
@@ -1663,6 +1682,9 @@ def test_spawn_task_for_each_row_prompt_format_positional_fields_use_python_erro
         ("{name!rr}", "expected ':' after conversion specifier"),
         ("{!}", "unmatched '\\{' in format spec"),
         ("{name!}", "unmatched '\\{' in format spec"),
+        ("hello }", "Single '\\}' encountered in format string"),
+        ("{{ }", "Single '\\}' encountered in format string"),
+        ("{name}}", "Single '\\}' encountered in format string"),
     ],
 )
 def test_spawn_task_for_each_row_prompt_format_conversion_errors_match_python(
@@ -1825,6 +1847,16 @@ def test_spawn_task_for_each_row_prompt_format_nested_specs_errors_match_python(
             ValueError,
             "'=' alignment not allowed in string format specifier",
         ),
+        ("{name:+8}", ValueError, "Sign not allowed in string format specifier"),
+        ("{name:-8}", ValueError, "Sign not allowed in string format specifier"),
+        ("{name: 8}", ValueError, "Space not allowed in string format specifier"),
+        (
+            "{name:#8}",
+            ValueError,
+            "Alternate form \\(#\\) not allowed in string format specifier",
+        ),
+        ("{name:+,8}", ValueError, "Cannot specify ',' with '8'."),
+        ("{name:0_8}", ValueError, "Cannot specify '_' with '8'."),
         ("{name:.}", ValueError, "Format specifier missing precision"),
         ("{name:8.x}", ValueError, "Format specifier missing precision"),
         (
