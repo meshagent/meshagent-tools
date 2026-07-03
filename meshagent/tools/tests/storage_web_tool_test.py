@@ -654,6 +654,30 @@ def test_html_to_markdown_structural_inline_block_edge_cases() -> None:
             '<div class="ocr_page"><span class="ocrx_word" title="bbox 0 0 10 10">Hi</span></div>',
             "Hi\n",
         ),
+        (
+            '<p>Before</p><input value="x"><source src="x"><embed src="y"><p>After</p>',
+            "Before\n\nAfter\n",
+        ),
+        (
+            '<video><source src=""><source src="v.mp4">Fallback</video>',
+            "Fallback\n",
+        ),
+        ('<audio><source srcset="a.mp3">Fallback</audio>', "Fallback\n"),
+        (
+            '<picture><source srcset="a.webp"><img src="a.png" alt="A"></picture>',
+            "![A](a.png)\n",
+        ),
+        ('<iframe src="">Fallback</iframe><p>A</p>', "A\n"),
+        (
+            '<p><object data="x.swf">Fallback</object><embed src="x.swf">Tail</p>',
+            "FallbackTail\n",
+        ),
+        ("<canvas>Canvas</canvas><noscript>No script</noscript>", "CanvasNo script\n"),
+        (
+            "<p>before</p><noscript><p>No JS</p></noscript><p>after</p>",
+            "before\n\nNo JS\n\nafter\n",
+        ),
+        ("<script>bad</script><style>bad</style><p>Good</p>", "\n\nGood\n"),
     ]
     for html, expected in cases:
         assert convert(html) == expected

@@ -25,9 +25,6 @@ class ListTools(LocalRoomTool):
             if context.on_behalf_of is not None
             else context.caller.id
         )
-        print(
-            f"{participant_id} {context.caller.id} {context.on_behalf_of}", flush=True
-        )
         toolkits = await self.room.agents.list_toolkits(participant_id=participant_id)
         return {"toolkits": [*(t.to_json() for t in toolkits)]}
 

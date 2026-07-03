@@ -1,5 +1,6 @@
 import pytest
 from collections.abc import AsyncIterable
+from jsonschema import SchemaError as JsonSchemaSchemaError
 from jsonschema import ValidationError as JsonSchemaValidationError
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -63,6 +64,21 @@ class _AddTool(FunctionTool):
         return {"c": a + b}
 
 
+class _SchemaProbeTool(FunctionTool):
+    def __init__(self, *, input_schema: dict[str, object]) -> None:
+        super().__init__(
+            name="schema_probe",
+            input_schema=input_schema,
+            output_spec=ToolContentSpec(types=["json"], stream=False),
+        )
+
+    async def execute(
+        self, context: ToolContext, **kwargs: object
+    ) -> dict[str, object]:
+        del context
+        return {"arguments": kwargs}
+
+
 class _StreamTextEchoTool(ContentTool):
     def __init__(self) -> None:
         super().__init__(
@@ -107,6 +123,30 @@ class _BadStreamOutputTool(ContentTool):
             yield JsonContent(json={"wrong": True})
 
         return stream()
+
+
+class _CollectStreamTextTool(ContentTool):
+    def __init__(self) -> None:
+        super().__init__(
+            name="collect_stream_text",
+            input_spec=ToolContentSpec(types=["text"], stream=True),
+            output_spec=ToolContentSpec(types=["json"], stream=False),
+        )
+
+    async def execute(
+        self,
+        *,
+        context: ToolContext,
+        input: AsyncIterable[Content] | Content,
+    ) -> AsyncIterable[Content] | Content:
+        del context
+        assert isinstance(input, AsyncIterable)
+
+        values: list[str] = []
+        async for item in input:
+            assert isinstance(item, TextContent)
+            values.append(item.text)
+        return JsonContent(json={"values": values})
 
 
 class _ClientOptionsToolkit(Toolkit):
@@ -1707,6 +1747,265 @@ async def test_toolkit_full_validation_matches_nested_additional_properties_word
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("property_schema", "value", "message"),
+    [
+        ({"enum": ["fast", "slow"]}, "turbo", "'turbo' is not one of ['fast', 'slow']"),
+        ({"type": "integer"}, "one", "'one' is not of type 'integer'"),
+        (
+            {"type": ["integer", "number"]},
+            "one",
+            "'one' is not of type 'integer', 'number'",
+        ),
+        ({"minimum": 3}, 2, "2 is less than the minimum of 3"),
+        ({"maximum": 3}, 4, "4 is greater than the maximum of 3"),
+        ({"exclusiveMinimum": 3}, 3, "3 is less than or equal to the minimum of 3"),
+        (
+            {"exclusiveMaximum": 3},
+            3,
+            "3 is greater than or equal to the maximum of 3",
+        ),
+        ({"multipleOf": 2}, 5, "5 is not a multiple of 2"),
+        ({"pattern": "^[a-z]+$"}, "ABC", "'ABC' does not match '^[a-z]+$'"),
+        ({"type": "string", "minLength": 2}, "x", "'x' is too short"),
+        ({"type": "string", "maxLength": 3}, "abcd", "'abcd' is too long"),
+        ({"type": "array", "minItems": 2}, [1], "[1] is too short"),
+        ({"type": "array", "maxItems": 2}, [1, 2, 3], "[1, 2, 3] is too long"),
+        ({"type": "object", "minProperties": 1}, {}, "{} should be non-empty"),
+        (
+            {"type": "object", "maxProperties": 1},
+            {"a": 1, "b": 2},
+            "{'a': 1, 'b': 2} has too many properties",
+        ),
+        ({"const": "expected"}, "actual", "'expected' was expected"),
+        (
+            {"type": "array", "uniqueItems": True},
+            [1, 1],
+            "[1, 1] has non-unique elements",
+        ),
+        (
+            {"anyOf": [{"type": "string"}, {"type": "boolean"}]},
+            1,
+            "1 is not valid under any of the given schemas",
+        ),
+        (
+            {"oneOf": [{"type": "string"}, {"type": "boolean"}]},
+            1,
+            "1 is not valid under any of the given schemas",
+        ),
+        (
+            {"oneOf": [{"type": "number"}, {"minimum": 0}]},
+            1,
+            "1 is valid under each of {'minimum': 0}, {'type': 'number'}",
+        ),
+        (
+            {"type": "array", "contains": {"type": "string"}},
+            [1, 2],
+            "[1, 2] does not contain items matching the given schema",
+        ),
+        (
+            {"type": "array", "contains": {"type": "string"}, "minContains": 2},
+            ["x", 1],
+            "Too few items match the given schema (expected at least 2 but only 1 matched)",
+        ),
+        (
+            {"type": "array", "contains": {"type": "string"}, "maxContains": 1},
+            ["x", "y"],
+            "Too many items match the given schema (expected at most 1)",
+        ),
+        (
+            {"type": "array", "prefixItems": [{"type": "string"}], "items": False},
+            ["x", 1, 2],
+            "Expected at most 1 item but found 2 extra: [1, 2]",
+        ),
+        (
+            {"type": "array", "items": False},
+            [1],
+            "Expected at most 0 items but found 1 extra: 1",
+        ),
+        (
+            {"type": "object", "dependentRequired": {"a": ["b", "c"]}},
+            {"a": 1},
+            "'b' is a dependency of 'a'",
+        ),
+        (
+            {"type": "object", "dependentSchemas": {"a": {"required": ["b"]}}},
+            {"a": 1},
+            "'b' is a required property",
+        ),
+        (
+            {
+                "type": "object",
+                "if": {"properties": {"a": {"const": 1}}, "required": ["a"]},
+                "then": {"required": ["b"]},
+            },
+            {"a": 1},
+            "'b' is a required property",
+        ),
+        (False, 1, "False schema does not allow 1"),
+        (
+            {"allOf": [{"type": "string"}, {"minLength": 3}]},
+            "x",
+            "'x' is too short",
+        ),
+        (
+            {"not": {"type": "string"}},
+            "x",
+            "'x' should not be valid under {'type': 'string'}",
+        ),
+        (
+            {"type": "object", "additionalProperties": {"type": "string"}},
+            {"a": 1},
+            "1 is not of type 'string'",
+        ),
+        (
+            {"type": "object", "propertyNames": {"pattern": "^[a-z]+$"}},
+            {"Bad": 1},
+            "'Bad' does not match '^[a-z]+$'",
+        ),
+        (
+            {
+                "type": "object",
+                "properties": {"a": {}},
+                "unevaluatedProperties": False,
+            },
+            {"a": 1, "b": 2},
+            "Unevaluated properties are not allowed ('b' was unexpected)",
+        ),
+        (
+            {"prefixItems": [{"type": "string"}], "unevaluatedItems": False},
+            ["x", "y", "z"],
+            "Unevaluated items are not allowed ('y', 'z' were unexpected)",
+        ),
+    ],
+)
+async def test_toolkit_full_validation_common_branch_messages_match_python_jsonschema(
+    property_schema: dict[str, object] | bool,
+    value: object,
+    message: str,
+) -> None:
+    schema = {
+        "type": "object",
+        "required": ["value"],
+        "additionalProperties": False,
+        "properties": {"value": property_schema},
+    }
+    tool = FunctionTool(
+        name="schema_probe",
+        input_schema=schema,
+        output_spec=ToolContentSpec(types=["json"], stream=False),
+    )
+    toolkit = Toolkit(name="test", tools=[tool])
+    context = ToolContext(caller=object())
+
+    with pytest.raises(JsonSchemaValidationError) as exc_info:
+        await toolkit.invoke(
+            context=context,
+            name="schema_probe",
+            input=JsonContent(json={"value": value}),
+        )
+
+    assert exc_info.value.message == message
+
+
+@pytest.mark.asyncio
+async def test_toolkit_full_validation_draft7_additional_items_message_matches_python_jsonschema() -> (
+    None
+):
+    tool = _SchemaProbeTool(
+        input_schema={
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "required": ["items"],
+            "additionalProperties": False,
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": [{"type": "string"}],
+                    "additionalItems": False,
+                },
+            },
+        },
+    )
+    toolkit = Toolkit(name="test", tools=[tool])
+    context = ToolContext(caller=object())
+
+    with pytest.raises(JsonSchemaValidationError) as exc_info:
+        await toolkit.invoke(
+            context=context,
+            name="schema_probe",
+            input=JsonContent(json={"items": ["x", 1, 2]}),
+        )
+
+    assert (
+        exc_info.value.message
+        == "Additional items are not allowed (1, 2 were unexpected)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_toolkit_full_validation_ignores_format_and_content_keywords_like_python_jsonschema() -> (
+    None
+):
+    tool = _SchemaProbeTool(
+        input_schema={
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "type": "object",
+            "required": ["email", "encoded"],
+            "additionalProperties": False,
+            "properties": {
+                "email": {"type": "string", "format": "email"},
+                "encoded": {
+                    "type": "string",
+                    "contentEncoding": "base64",
+                    "contentMediaType": "application/json",
+                    "contentSchema": {"type": "object"},
+                },
+            },
+        },
+    )
+    toolkit = Toolkit(name="test", tools=[tool])
+    context = ToolContext(caller=object())
+
+    result = await toolkit.invoke(
+        context=context,
+        name="schema_probe",
+        input=JsonContent(json={"email": "not email", "encoded": "not base64!?"}),
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {
+        "arguments": {"email": "not email", "encoded": "not base64!?"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_toolkit_full_validation_invalid_schema_errors_match_python_jsonschema() -> (
+    None
+):
+    tool = FunctionTool(
+        name="schema_probe",
+        input_schema={
+            "type": "object",
+            "required": ["value"],
+            "properties": {"value": {"type": 3}},
+        },
+        output_spec=ToolContentSpec(types=["json"], stream=False),
+    )
+    toolkit = Toolkit(name="test", tools=[tool])
+    context = ToolContext(caller=object())
+
+    with pytest.raises(JsonSchemaSchemaError) as exc_info:
+        await toolkit.invoke(
+            context=context,
+            name="schema_probe",
+            input=JsonContent(json={"value": "anything"}),
+        )
+
+    assert exc_info.value.message == "3 is not valid under any of the given schemas"
+
+
+@pytest.mark.asyncio
 async def test_toolkit_content_types_mode_allows_optional_nested_pydantic_fields():
     toolkit = Toolkit(
         name="test",
@@ -1798,6 +2097,26 @@ async def test_toolkit_stream_output_validation_is_lazy_like_python():
         ),
     ):
         await iterator.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_toolkit_stream_input_can_return_unary_content_like_python():
+    toolkit = Toolkit(name="test", tools=[_CollectStreamTextTool()])
+    context = ToolContext(caller=object())
+
+    async def input_stream() -> AsyncIterable[Content]:
+        yield TextContent(text="one")
+        yield TextContent(text="two")
+
+    result = await toolkit.invoke(
+        context=context,
+        name="collect_stream_text",
+        input=input_stream(),
+        validation_mode="content_types",
+    )
+
+    assert isinstance(result, JsonContent)
+    assert result.json == {"values": ["one", "two"]}
 
 
 @pytest.mark.asyncio
@@ -4028,10 +4347,7 @@ async def test_toolkit_full_validation_mode_rejects_optional_nested_pydantic_fie
     toolkit = Toolkit(name="test", tools=[count_mounts])
     context = ToolContext(caller=object())
 
-    with pytest.raises(
-        JsonSchemaValidationError,
-        match="'project' is a required property",
-    ):
+    with pytest.raises(JsonSchemaValidationError) as exc_info:
         await toolkit.invoke(
             context=context,
             name="count_mounts",
@@ -4039,3 +4355,6 @@ async def test_toolkit_full_validation_mode_rejects_optional_nested_pydantic_fie
                 json={"mounts": [{"room": [{"path": "/", "read_only": False}]}]}
             ),
         )
+    message = str(exc_info.value)
+    assert "is a required property" in message
+    assert "ContainerMountSpec" in message

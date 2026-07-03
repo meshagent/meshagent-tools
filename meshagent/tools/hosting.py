@@ -484,6 +484,12 @@ class _RemoteToolkitWrapper(Toolkit):
             raw_arguments = message["arguments"]
             caller_id = message["caller_id"]
             on_behalf_of_id = message.get("on_behalf_of_id", None)
+            if not isinstance(name, str):
+                raise InvalidToolDataException("name is required")
+            if not isinstance(caller_id, str):
+                raise InvalidToolDataException("caller_id is required")
+            if on_behalf_of_id is not None and not isinstance(on_behalf_of_id, str):
+                on_behalf_of_id = None
             tool_call_id = message.get("tool_call_id", None)
             if not isinstance(tool_call_id, str) or tool_call_id == "":
                 tool_call_id = str(message_id)

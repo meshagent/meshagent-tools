@@ -963,6 +963,12 @@ def _decode_hosted_tool_call_input_like_python(
     raw_arguments = message["arguments"]
     caller_id = message["caller_id"]
     on_behalf_of_id = message.get("on_behalf_of_id", None)
+    if not isinstance(name, str):
+        raise hosting.InvalidToolDataException("name is required")
+    if not isinstance(caller_id, str):
+        raise hosting.InvalidToolDataException("caller_id is required")
+    if on_behalf_of_id is not None and not isinstance(on_behalf_of_id, str):
+        on_behalf_of_id = None
     tool_call_id = message.get("tool_call_id", None)
     if not isinstance(tool_call_id, str) or tool_call_id == "":
         tool_call_id = str(message_id)
@@ -1047,6 +1053,88 @@ def test_remote_toolkit_wrapper_tool_call_input_decode_branches_match_python() -
     assert isinstance(stream_open[4], _ControlContent)
     assert stream_open[4].method == "open"
     assert stream_open[5] is True
+
+    non_string_on_behalf_of = _decode_hosted_tool_call_input_like_python(
+        message_id=44,
+        data=pack_message(
+            header={
+                "name": "echo",
+                "caller_id": "caller-1",
+                "on_behalf_of_id": 123,
+                "arguments": {"type": "json", "json": {}},
+            },
+            data=None,
+        ),
+    )
+    assert non_string_on_behalf_of[2] is None
+
+    with pytest.raises(
+        hosting.InvalidToolDataException,
+        match="name is required",
+    ):
+        _decode_hosted_tool_call_input_like_python(
+            message_id=44,
+            data=pack_message(
+                header={
+                    "name": 123,
+                    "caller_id": "caller-1",
+                    "arguments": {"type": "json", "json": {}},
+                },
+                data=None,
+            ),
+        )
+
+    with pytest.raises(
+        hosting.InvalidToolDataException,
+        match="caller_id is required",
+    ):
+        _decode_hosted_tool_call_input_like_python(
+            message_id=44,
+            data=pack_message(
+                header={
+                    "name": "echo",
+                    "caller_id": 123,
+                    "arguments": {"type": "json", "json": {}},
+                },
+                data=None,
+            ),
+        )
+
+    with pytest.raises(KeyError, match="'name'"):
+        _decode_hosted_tool_call_input_like_python(
+            message_id=44,
+            data=pack_message(
+                header={
+                    "caller_id": "caller-1",
+                    "arguments": {"type": "json", "json": {}},
+                },
+                data=None,
+            ),
+        )
+
+    with pytest.raises(KeyError, match="'caller_id'"):
+        _decode_hosted_tool_call_input_like_python(
+            message_id=44,
+            data=pack_message(
+                header={
+                    "name": "echo",
+                    "arguments": {"type": "json", "json": {}},
+                },
+                data=None,
+            ),
+        )
+
+    with pytest.raises(KeyError, match="'arguments'"):
+        _decode_hosted_tool_call_input_like_python(
+            message_id=44,
+            data=pack_message(
+                header={
+                    "name": "echo",
+                    "caller_id": "caller-1",
+                },
+                data=None,
+            ),
+        )
 
     with pytest.raises(
         hosting.InvalidToolDataException,
