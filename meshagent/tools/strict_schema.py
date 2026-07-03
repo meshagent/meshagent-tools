@@ -74,9 +74,9 @@ def _ensure_strict_json_schema(
     ):
         raise RoomException(
             "additionalProperties should be false or a strict schema for object types. "
-            "This could be because you're using an older version of Pydantic, or because "
-            "you configured additional properties to be allowed. If you really need this, "
-            "update the function or output tool to not use a strict schema."
+            "This could be because the generated schema allows extra properties. "
+            "If you really need this, update the function or output tool to not use "
+            "a strict schema."
         )
 
     # object types

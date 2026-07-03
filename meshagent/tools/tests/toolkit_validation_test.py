@@ -1,4 +1,5 @@
 import pytest
+from collections.abc import AsyncIterable
 from jsonschema import ValidationError as JsonSchemaValidationError
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -19,9 +20,9 @@ from pydantic import (
 
 import meshagent.tools.toolkit as toolkit_module
 from meshagent.api import ToolContentSpec
-from meshagent.api.messaging import JsonContent
+from meshagent.api.messaging import Content, JsonContent, TextContent
 from meshagent.api.specs.service import ContainerMountSpec
-from meshagent.tools import FunctionTool, ToolContext, Toolkit, tool
+from meshagent.tools import ContentTool, FunctionTool, ToolContext, Toolkit, tool
 from meshagent.tools.pydantic import PydanticTool
 
 
@@ -60,6 +61,74 @@ class _AddTool(FunctionTool):
     async def execute(self, context: ToolContext, *, a: int, b: int):
         del context
         return {"c": a + b}
+
+
+class _StreamTextEchoTool(ContentTool):
+    def __init__(self) -> None:
+        super().__init__(
+            name="stream_text",
+            input_spec=ToolContentSpec(types=["text"], stream=True),
+            output_spec=ToolContentSpec(types=["text"], stream=True),
+        )
+
+    async def execute(
+        self,
+        *,
+        context: ToolContext,
+        input: AsyncIterable[Content] | Content,
+    ) -> AsyncIterable[Content] | Content:
+        del context
+        assert isinstance(input, AsyncIterable)
+
+        async def stream() -> AsyncIterable[Content]:
+            async for item in input:
+                yield item
+
+        return stream()
+
+
+class _BadStreamOutputTool(ContentTool):
+    def __init__(self) -> None:
+        super().__init__(
+            name="bad_stream_output",
+            input_spec=ToolContentSpec(types=["text"], stream=True),
+            output_spec=ToolContentSpec(types=["text"], stream=True),
+        )
+
+    async def execute(
+        self,
+        *,
+        context: ToolContext,
+        input: AsyncIterable[Content] | Content,
+    ) -> AsyncIterable[Content] | Content:
+        del context, input
+
+        async def stream() -> AsyncIterable[Content]:
+            yield JsonContent(json={"wrong": True})
+
+        return stream()
+
+
+class _ClientOptionsToolkit(Toolkit):
+    def __init__(self) -> None:
+        self.seen_client_options: list[dict | None] = []
+        super().__init__(
+            name="client-options",
+            tools=[_AddTool()],
+            rules=["base-rule"],
+            title="Client Options",
+            description="client options toolkit",
+            validation_mode="content_types",
+            public=False,
+            client_options={"original": True},
+            hidden=True,
+            annotations={"owner": "source"},
+            trace_tool_calls=False,
+        )
+
+    def get_tools(self, *, client_options: dict | None = None):
+        self.seen_client_options.append(client_options)
+        return [*self.tools]
 
 
 class _NestedPayload(BaseModel):
@@ -1675,6 +1744,60 @@ async def test_toolkit_content_types_mode_supports_manual_nested_pydantic_argume
 
     assert isinstance(result, JsonContent)
     assert result.json == {"value": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_toolkit_stream_input_validation_is_lazy_like_python():
+    toolkit = Toolkit(name="test", tools=[_StreamTextEchoTool()])
+    context = ToolContext(caller=object())
+
+    async def input_stream() -> AsyncIterable[Content]:
+        yield JsonContent(json={"wrong": True})
+
+    result = await toolkit.invoke(
+        context=context,
+        name="stream_text",
+        input=input_stream(),
+        validation_mode="content_types",
+    )
+
+    assert isinstance(result, AsyncIterable)
+    iterator = result.__aiter__()
+    with pytest.raises(
+        toolkit_module.InvalidToolDataException,
+        match=(
+            "tool 'stream_text' input content type 'json' is not allowed "
+            "by input_spec \\(text\\)"
+        ),
+    ):
+        await iterator.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_toolkit_stream_output_validation_is_lazy_like_python():
+    toolkit = Toolkit(name="test", tools=[_BadStreamOutputTool()])
+    context = ToolContext(caller=object())
+
+    async def input_stream() -> AsyncIterable[Content]:
+        yield TextContent(text="ok")
+
+    result = await toolkit.invoke(
+        context=context,
+        name="bad_stream_output",
+        input=input_stream(),
+        validation_mode="content_types",
+    )
+
+    assert isinstance(result, AsyncIterable)
+    iterator = result.__aiter__()
+    with pytest.raises(
+        toolkit_module.InvalidToolDataException,
+        match=(
+            "tool 'bad_stream_output' output content type 'json' is not allowed "
+            "by output_spec \\(text\\)"
+        ),
+    ):
+        await iterator.__anext__()
 
 
 @pytest.mark.asyncio
@@ -3859,6 +3982,29 @@ async def test_toolkit_execute_can_suppress_tool_call_spans(
     assert isinstance(result, JsonContent)
     assert result.json == {"c": 3}
     assert recorded_tracer.spans == []
+
+
+def test_toolkit_with_client_options_matches_python_base_copy_behavior() -> None:
+    toolkit = _ClientOptionsToolkit()
+
+    wrapped = toolkit.with_client_options(client_options={"turn": "one"})
+
+    assert toolkit.seen_client_options == [{"turn": "one"}]
+    assert wrapped is not toolkit
+    assert wrapped.name == toolkit.name
+    assert wrapped.tools == toolkit.tools
+    assert wrapped.rules == ["base-rule"]
+    assert wrapped.rules is not toolkit.rules
+    assert wrapped.title == "Client Options"
+    assert wrapped.description == "client options toolkit"
+    assert wrapped.validation_mode == "content_types"
+    assert wrapped.public is False
+    assert wrapped.client_options == {"original": True}
+    assert wrapped.hidden is True
+    assert wrapped.annotations == {"owner": "source"}
+    assert wrapped.annotations is not toolkit.annotations
+    assert wrapped._room is toolkit._room
+    assert wrapped.trace_tool_calls is False
 
 
 @pytest.mark.asyncio

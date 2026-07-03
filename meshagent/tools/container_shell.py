@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import posixpath
 import shlex
@@ -135,6 +136,123 @@ def _json_output_spec(model_type: type[BaseModel]) -> ToolContentSpec:
     )
 
 
+def _invalid_input(model_name: str, detail: str) -> ValueError:
+    return ValueError(f"{model_name}: {detail}")
+
+
+def _source_model_int(value: object, *, model_name: str, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value) and value.is_integer():
+            return int(value)
+        raise _invalid_input(model_name, f"{field} must be an integer")
+    if isinstance(value, str):
+        trimmed = value.strip()
+        try:
+            return int(trimmed)
+        except ValueError:
+            try:
+                parsed_float = float(trimmed)
+            except ValueError as exc:
+                raise _invalid_input(model_name, f"{field} must be an integer") from exc
+            if math.isfinite(parsed_float) and parsed_float.is_integer():
+                return int(parsed_float)
+        raise _invalid_input(model_name, f"{field} must be an integer")
+    raise _invalid_input(model_name, f"{field} must be an integer")
+
+
+def _validate_container_shell_input(
+    model_type: type[_ContainerShellInput],
+    payload: dict[str, object],
+) -> _ContainerShellInput:
+    model_name = model_type.__name__
+    if "commands" not in payload:
+        raise _invalid_input(model_name, "commands is required")
+    commands = payload["commands"]
+    if not isinstance(commands, list):
+        raise _invalid_input(model_name, "commands must be a list")
+    if len(commands) == 0:
+        raise _invalid_input(model_name, "commands must contain at least one command")
+    for index, command in enumerate(commands):
+        if not isinstance(command, str):
+            raise _invalid_input(model_name, f"commands.{index} must be a string")
+
+    fields: dict[str, object] = {
+        "commands": commands,
+        "max_output_length": _source_model_int(
+            payload.get("max_output_length"),
+            model_name=model_name,
+            field="max_output_length",
+        ),
+        "timeout_ms": _source_model_int(
+            payload.get("timeout_ms"),
+            model_name=model_name,
+            field="timeout_ms",
+        ),
+    }
+    if issubclass(model_type, _ManagedContainerShellInput):
+        container_id = payload.get("container_id")
+        if not isinstance(container_id, str):
+            raise _invalid_input(model_name, "container_id must be a string")
+        if container_id == "":
+            raise _invalid_input(model_name, "container_id must be non-empty")
+        fields["container_id"] = container_id
+    return model_type.model_construct(**fields)
+
+
+def _validate_managed_container_selector(
+    payload: dict[str, object],
+) -> _ManagedContainerSelector:
+    model_name = _ManagedContainerSelector.__name__
+    container_id = payload.get("container_id")
+    if not isinstance(container_id, str):
+        raise _invalid_input(model_name, "container_id must be a string")
+    if container_id == "":
+        raise _invalid_input(model_name, "container_id must be non-empty")
+    return _ManagedContainerSelector.model_construct(container_id=container_id)
+
+
+def _validate_start_managed_container_input(
+    payload: dict[str, object],
+) -> _StartManagedContainerInput:
+    model_name = _StartManagedContainerInput.__name__
+    env = payload.get("env")
+    resolved_env = None
+    if env is not None:
+        if not isinstance(env, list):
+            raise _invalid_input(model_name, "env must be a list")
+        resolved_env = []
+        for index, entry in enumerate(env):
+            if isinstance(entry, ContainerEnvVar):
+                key = entry.key
+                value = entry.value
+            elif isinstance(entry, dict):
+                key = entry.get("key")
+                value = entry.get("value")
+            else:
+                key = None
+                value = None
+            if key == "":
+                raise _invalid_input(model_name, f"env.{index}.key must be non-empty")
+            if isinstance(key, str) and isinstance(value, str):
+                resolved_env.append(
+                    ContainerEnvVar.model_construct(key=key, value=value)
+                )
+            else:
+                resolved_env.append(entry)
+    return _StartManagedContainerInput.model_construct(
+        image=payload.get("image"),
+        mounts=payload.get("mounts"),
+        env=resolved_env,
+        working_dir=payload.get("working_dir"),
+    )
+
+
 async def _stream_reader_chunks(
     reader: asyncio.StreamReader | None,
 ) -> AsyncIterable[bytes]:
@@ -183,7 +301,6 @@ def _merge_container_mounts(
         return defaults.model_copy(deep=True)
 
     room_mounts = [*(defaults.room or []), *(overrides.room or [])]
-    project_mounts = [*(defaults.project or []), *(overrides.project or [])]
     image_mounts = [*(defaults.images or []), *(overrides.images or [])]
     file_mounts = [*(defaults.files or []), *(overrides.files or [])]
     empty_dir_mounts = [*(defaults.empty_dirs or []), *(overrides.empty_dirs or [])]
@@ -191,7 +308,6 @@ def _merge_container_mounts(
 
     return ContainerMountSpec(
         room=room_mounts or None,
-        project=project_mounts or None,
         images=image_mounts or None,
         files=file_mounts or None,
         empty_dirs=empty_dir_mounts or None,
@@ -523,7 +639,7 @@ class BaseContainerShellTool(LocalRoomTool):
         if issubclass(self._input_model, _ManagedContainerShellInput):
             payload["container_id"] = container_id
 
-        parsed = self._input_model.model_validate(payload)
+        parsed = _validate_container_shell_input(self._input_model, payload)
 
         parsed_container_id: str | None = None
         if isinstance(parsed, _ManagedContainerShellInput):
@@ -771,12 +887,13 @@ class ProcessShellTool(FunctionTool):
         max_output_length: int | None = None,
         timeout_ms: int | None = None,
     ) -> dict[str, list[dict[str, object]]]:
-        parsed = _ContainerShellInput.model_validate(
+        parsed = _validate_container_shell_input(
+            _ContainerShellInput,
             {
                 "commands": commands,
                 "max_output_length": max_output_length,
                 "timeout_ms": timeout_ms,
-            }
+            },
         )
 
         effective_max_output_length = (
@@ -940,13 +1057,13 @@ class _StartManagedContainerTool(LocalRoomTool):
         env: list[ContainerEnvVar] | None = None,
         working_dir: str | None = None,
     ) -> dict[str, str]:
-        parsed = _StartManagedContainerInput.model_validate(
+        parsed = _validate_start_managed_container_input(
             {
                 "image": image,
                 "mounts": mounts,
                 "env": env,
                 "working_dir": working_dir,
-            }
+            },
         )
         container_id = await self._manager.start_container(
             room=self.room,
@@ -976,9 +1093,7 @@ class _StopManagedContainerTool(LocalRoomTool):
         *,
         container_id: str,
     ) -> dict[str, object]:
-        parsed = _ManagedContainerSelector.model_validate(
-            {"container_id": container_id}
-        )
+        parsed = _validate_managed_container_selector({"container_id": container_id})
         await self._manager.stop_container(
             room=self.room,
             container_id=parsed.container_id,

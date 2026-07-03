@@ -1,7 +1,8 @@
 import pytest
 
-from meshagent.api import ToolContentSpec
+from meshagent.api import RoomException, ToolContentSpec
 from meshagent.tools import ContentTool, FunctionTool
+from meshagent.tools.strict_schema import ensure_strict_json_schema
 
 
 def test_tool_forces_json_input_type() -> None:
@@ -22,6 +23,16 @@ def test_tool_forces_json_input_type() -> None:
 def test_tool_requires_input_schema_dict() -> None:
     with pytest.raises(TypeError, match="input_schema must be a dict"):
         FunctionTool(name="sample", input_schema=None)  # type: ignore[arg-type]
+
+
+def test_strict_schema_rejects_extra_properties_with_source_neutral_error() -> None:
+    with pytest.raises(RoomException, match="generated schema allows extra properties"):
+        ensure_strict_json_schema(
+            {
+                "type": "object",
+                "additionalProperties": True,
+            }
+        )
 
 
 def test_stream_tool_preserves_declared_content_types() -> None:

@@ -6,6 +6,7 @@ from typing import Callable
 
 import pytest
 
+from meshagent.api import ErrorCode
 from meshagent.api.messaging import (
     Content,
     ControlCloseStatus,
@@ -256,6 +257,24 @@ class _FailingTool(FunctionTool):
         raise RoomException("messaging is already enabled")
 
 
+class _GenericFailingTool(FunctionTool):
+    def __init__(self):
+        super().__init__(
+            name="generic_failing_tool",
+            input_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {},
+                "required": [],
+            },
+        )
+
+    async def execute(self, context, **kwargs):
+        del context
+        del kwargs
+        raise RuntimeError("generic failure")
+
+
 def _make_hosted_toolkit(
     *,
     tools: list[FunctionTool | ContentTool],
@@ -500,6 +519,7 @@ async def test_remote_toolkit_validation_rejects_unary_input_schema_mismatch() -
     response = unpack_content(room.protocol.sent[-1].data)
     assert isinstance(response, ErrorContent)
     assert "input does not match input_schema" in response.text
+    assert response.code == ErrorCode.INVALID_REQUEST
 
 
 @pytest.mark.asyncio
@@ -561,6 +581,7 @@ async def test_remote_toolkit_validation_rejects_stream_input_schema_mismatch() 
     response = unpack_content(room.protocol.sent[-1].data)
     assert isinstance(response, ErrorContent)
     assert "input does not match input_schema" in response.text
+    assert response.code == ErrorCode.INVALID_REQUEST
 
 
 @pytest.mark.asyncio
@@ -674,11 +695,40 @@ async def test_remote_toolkit_logs_tool_failures_as_warnings_with_exception_mess
     response = unpack_content(room.protocol.sent[-1].data)
     assert isinstance(response, ErrorContent)
     assert response.text == "messaging is already enabled"
+    assert response.code == ErrorCode.INVALID_REQUEST
 
     warning_records = [record for record in caplog.records if record.name == "hosting"]
     assert len(warning_records) == 1
     assert warning_records[0].levelno == logging.WARNING
     assert warning_records[0].message == "messaging is already enabled"
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_generic_tool_failures_have_no_error_code() -> None:
+    room = _FakeRoom()
+    toolkit = _make_hosted_toolkit(tools=[_GenericFailingTool()])
+    toolkit._room = room  # type: ignore[assignment]
+
+    await toolkit._tool_call(
+        protocol=room.protocol,  # type: ignore[arg-type]
+        message_id=51,
+        msg_type="room.tool_call.test",
+        data=pack_message(
+            header={
+                "name": "generic_failing_tool",
+                "arguments": JsonContent(json={}).to_json(),
+                "caller_id": "caller-1",
+                "tool_call_id": "tc-req-9",
+            }
+        ),
+    )
+
+    await asyncio.wait_for(room.protocol.response_sent, timeout=2.0)
+
+    response = unpack_content(room.protocol.sent[-1].data)
+    assert isinstance(response, ErrorContent)
+    assert response.text == "generic failure"
+    assert response.code is None
 
 
 @pytest.mark.asyncio

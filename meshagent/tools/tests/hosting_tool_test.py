@@ -4,6 +4,7 @@ from collections.abc import AsyncIterable
 import pytest
 
 from meshagent.api import RemoteParticipant, RoomException
+from meshagent.api.error_codes import ErrorCode
 from meshagent.api.messaging import (
     Content,
     EmptyContent,
@@ -183,10 +184,18 @@ async def test_remote_toolkit_wrapper_register_and_unregister_match_python_reque
             title="Remote",
             description="remote tools",
             tools=[function_tool, content_tool],
+            rules=["not copied"],
+            client_options={"original": True},
+            hidden=True,
             annotations={"owner": "tools"},
         ),
         public=False,
     )
+
+    assert wrapper.rules == []
+    assert wrapper.client_options is None
+    assert wrapper.hidden is False
+    assert wrapper.room is None
 
     requests: list[tuple[str, dict]] = []
 
@@ -332,6 +341,157 @@ def test_remote_toolkit_server_construction_and_factory_match_python() -> None:
 
     cls_server = RemoteToolkitServer(cls=ExampleToolkit)
     assert cls_server._create_toolkit(arguments={"suffix": "two"}).name == "cls-two"
+
+
+@pytest.mark.asyncio
+async def test_remote_toolkit_server_spawn_lifecycle_matches_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_arguments: list[dict | None] = []
+    created_protocols: list[tuple[str, str]] = []
+    created_wrappers: list[Toolkit] = []
+    wrapper_events: list[tuple[str, str]] = []
+    done = asyncio.Event()
+
+    def create_toolkit(*, arguments: dict | None) -> Toolkit:
+        seen_arguments.append(arguments)
+        suffix = "default" if arguments is None else arguments.get("suffix", "default")
+        return Toolkit(name=f"toolkit-{suffix}", tools=[])
+
+    class FakeProtocolFactory:
+        def __init__(self, *, url: str, token: str) -> None:
+            created_protocols.append((url, token))
+
+        def create_factory(self):
+            return "protocol-factory"
+
+    class FakeMessaging:
+        def __init__(self) -> None:
+            self.handlers: list[tuple[str, object]] = []
+
+        def on(self, event: str, handler) -> None:
+            self.handlers.append((event, handler))
+
+    class FakeProtocol:
+        def __init__(self) -> None:
+            self.waited = False
+
+        async def wait_for_close(self) -> None:
+            self.waited = True
+
+    class FakeRoom:
+        def __init__(self) -> None:
+            self.messaging = FakeMessaging()
+            self.protocol = FakeProtocol()
+
+    fake_room = FakeRoom()
+
+    class FakeRoomClient:
+        def __init__(self, *, protocol_factory) -> None:
+            self.protocol_factory = protocol_factory
+
+        async def __aenter__(self):
+            assert self.protocol_factory == "protocol-factory"
+            return fake_room
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeWrapper:
+        def __init__(self, *, toolkit: Toolkit) -> None:
+            created_wrappers.append(toolkit)
+            self.toolkit = toolkit
+
+        async def start(self, *, room) -> None:
+            assert room is fake_room
+            wrapper_events.append(("start", self.toolkit.name))
+
+        async def stop(self) -> None:
+            wrapper_events.append(("stop", self.toolkit.name))
+            done.set()
+
+    monkeypatch.setattr(hosting, "WebSocketClientProtocol", FakeProtocolFactory)
+    monkeypatch.setattr(hosting, "RoomClient", FakeRoomClient)
+    monkeypatch.setattr(hosting, "_RemoteToolkitWrapper", FakeWrapper)
+
+    server = RemoteToolkitServer(create_toolkit=create_toolkit)
+    await server._spawn(
+        room_name="room-1",
+        room_url="wss://example.test/rooms/room-1",
+        token="token-123",
+        arguments={"suffix": "spawn"},
+    )
+    await asyncio.wait_for(done.wait(), timeout=1)
+
+    assert seen_arguments == [{"suffix": "spawn"}]
+    assert [toolkit.name for toolkit in created_wrappers] == ["toolkit-spawn"]
+    assert created_protocols == [("wss://example.test/rooms/room-1", "token-123")]
+    assert fake_room.messaging.handlers[0][0] == "message"
+    assert fake_room.protocol.waited is True
+    assert wrapper_events == [("start", "toolkit-spawn"), ("stop", "toolkit-spawn")]
+
+
+@pytest.mark.asyncio
+async def test_connect_remote_toolkit_uses_tool_identity_and_stops_on_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolkit = Toolkit(name="remote-tools", tools=[])
+    protocol_calls: list[tuple[str, str, str]] = []
+    room_client_factories: list[object] = []
+    wrapper_events: list[tuple[str, str]] = []
+    signal_handlers: dict[int, object] = {}
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    class FakeWebsocketProtocol:
+        def __init__(self, *, participant_name: str, room_name: str, role: str) -> None:
+            protocol_calls.append((participant_name, room_name, role))
+
+        def create_factory(self):
+            return "protocol-factory"
+
+    class FakeRoomClient:
+        def __init__(self, *, protocol_factory) -> None:
+            room_client_factories.append(protocol_factory)
+
+        async def __aenter__(self):
+            return "room"
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeWrapper:
+        def __init__(self, *, toolkit: Toolkit) -> None:
+            self.toolkit = toolkit
+
+        async def start(self, *, room) -> None:
+            wrapper_events.append(("start", self.toolkit.name))
+            assert room == "room"
+            started.set()
+
+        async def stop(self) -> None:
+            wrapper_events.append(("stop", self.toolkit.name))
+            stopped.set()
+
+    def fake_signal(sig, handler) -> None:
+        signal_handlers[sig] = handler
+
+    monkeypatch.setattr(hosting, "websocket_protocol", FakeWebsocketProtocol)
+    monkeypatch.setattr(hosting, "RoomClient", FakeRoomClient)
+    monkeypatch.setattr(hosting, "_RemoteToolkitWrapper", FakeWrapper)
+    monkeypatch.setattr(hosting.signal, "signal", fake_signal)
+
+    task = asyncio.create_task(
+        hosting.connect_remote_toolkit(room_name="room-1", toolkit=toolkit)
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    signal_handlers[hosting.signal.SIGTERM](hosting.signal.SIGTERM, None)
+    await asyncio.wait_for(stopped.wait(), timeout=1)
+    await task
+
+    assert protocol_calls == [("remote-tools", "room-1", "tool")]
+    assert room_client_factories == ["protocol-factory"]
+    assert wrapper_events == [("start", "remote-tools"), ("stop", "remote-tools")]
 
 
 @pytest.mark.asyncio
@@ -610,6 +770,7 @@ async def test_remote_toolkit_wrapper_non_stream_dispatch_matches_python() -> No
     )
     assert isinstance(invalid_result, ErrorContent)
     assert invalid_result.text == "tool 'echo' requires JSON object input"
+    assert invalid_result.code == ErrorCode.INVALID_REQUEST
 
     content_result = await _run_stream_tool_call_once(
         toolkit=toolkit,
@@ -648,6 +809,7 @@ async def test_remote_toolkit_wrapper_non_stream_dispatch_matches_python() -> No
     )
     assert isinstance(streamed_result, ErrorContent)
     assert streamed_result.text == "tool 'echo' does not accept streamed input"
+    assert streamed_result.code == ErrorCode.INVALID_REQUEST
 
 
 @pytest.mark.asyncio

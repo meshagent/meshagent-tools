@@ -92,6 +92,8 @@ def test_web_url_extension_matches_python_splitext_hidden_files() -> None:
     assert web_toolkit._url_extension("https://example.com/..json") == ""
     assert web_toolkit._url_extension("https://example.com/.a.json") == ".json"
     assert web_toolkit._url_extension("https://example.com/file.") == "."
+    assert web_toolkit._url_extension("https://example.com/file.yaml ") == ".yaml"
+    assert web_toolkit._url_extension("https://example.com/.a.json ") == ".json"
 
     assert not web_toolkit._is_text_like_url(
         url="https://example.com/.json",
@@ -103,6 +105,10 @@ def test_web_url_extension_matches_python_splitext_hidden_files() -> None:
     )
     assert web_toolkit._is_text_like_url(
         url="https://example.com/.a.json",
+        content_type="application/octet-stream",
+    )
+    assert web_toolkit._is_text_like_url(
+        url="https://example.com/file.yaml ",
         content_type="application/octet-stream",
     )
     assert web_toolkit._is_pdf_or_image_url(
@@ -866,6 +872,22 @@ async def test_read_file_supports_offset_and_truncation(tmp_path) -> None:
     assert result.text == truncate_text(text=content, offset=17, max_length=64)
 
 
+def test_resolve_storage_path_uses_first_duplicate_mount_path(tmp_path) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    prepared = storage_toolkit._prepare_mounts(
+        [
+            StorageToolLocalMount(path="/project", local_path=str(first_root)),
+            StorageToolLocalMount(path="/project", local_path=str(second_root)),
+        ]
+    )
+
+    resolved = storage_toolkit._resolve_storage_path(prepared, "/project/rules.md")
+
+    assert resolved.mount is prepared[0].mount
+    assert resolved.local_path == str(first_root / "rules.md")
+
+
 @pytest.mark.asyncio
 async def test_read_file_returns_binary_file_content_unchanged(tmp_path) -> None:
     data = b"%PDF-1.7\n\x00\x01\x02binary"
@@ -958,6 +980,42 @@ async def test_read_file_treats_json_as_text_when_mime_is_unknown(
         input=JsonContent(
             json={
                 "path": "/webmaster.json",
+                "offset": 0,
+            }
+        ),
+    )
+
+    assert isinstance(result, TextContent)
+    assert result.text == content
+
+
+@pytest.mark.asyncio
+async def test_read_file_trims_storage_extension_when_mime_is_unknown(
+    tmp_path, monkeypatch
+) -> None:
+    content = "name: webmaster\n"
+    file_path = tmp_path / "webmaster.yaml"
+    file_path.write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(
+        storage_toolkit.mimetypes,
+        "guess_type",
+        lambda _path: (None, None),
+    )
+
+    toolkit = StorageToolkit(
+        read_only=True,
+        max_length=500,
+        mounts=[
+            StorageToolLocalMount(path="/", local_path=str(tmp_path)),
+        ],
+    )
+    result = await toolkit.execute(
+        context=_tool_context(),
+        name="read_file",
+        input=JsonContent(
+            json={
+                "path": "/webmaster.yaml ",
                 "offset": 0,
             }
         ),
@@ -1642,6 +1700,42 @@ async def test_web_fetch_and_grep_decode_response_charset(monkeypatch) -> None:
     )
     assert isinstance(odd_utf16_result, TextContent)
     assert odd_utf16_result.text == "�"
+
+    unknown_charset_response = _FakeResponse(
+        data=b"not decoded",
+        content_type="text/plain",
+        charset="not-a-real-codec",
+    )
+    monkeypatch.setattr(
+        web_toolkit,
+        "new_client_session",
+        lambda: _FakeSession(unknown_charset_response),
+    )
+    with pytest.raises(LookupError, match="unknown encoding: not-a-real-codec"):
+        await toolkit.execute(
+            context=_tool_context(),
+            name="web_fetch",
+            input=JsonContent(
+                json={
+                    "url": "https://example.com/unknown-charset.txt",
+                    "offset": 0,
+                }
+            ),
+        )
+    with pytest.raises(LookupError, match="unknown encoding: not-a-real-codec"):
+        await toolkit.execute(
+            context=_tool_context(),
+            name="web_grep",
+            input=JsonContent(
+                json={
+                    "url": "https://example.com/unknown-charset.txt",
+                    "pattern": "decoded",
+                    "offset": 0,
+                    "before": None,
+                    "after": None,
+                }
+            ),
+        )
 
 
 @pytest.mark.asyncio

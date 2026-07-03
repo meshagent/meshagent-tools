@@ -12,6 +12,7 @@ from meshagent.api.messaging import (
     pack_message,
 )
 from meshagent.api import (
+    ErrorCode,
     websocket_protocol,
     RemoteParticipant,
     WebhookServer,
@@ -38,7 +39,12 @@ logger = logging.getLogger("hosting")
 
 
 def _error_content_for_exception(ex: Exception) -> ErrorContent:
-    code = ex.code if isinstance(ex, RoomException) else None
+    if isinstance(ex, RoomException):
+        code = ex.code
+    elif isinstance(ex, InvalidToolDataException):
+        code = ErrorCode.INVALID_REQUEST
+    else:
+        code = None
     return ErrorContent(text=f"{ex}", code=code)
 
 

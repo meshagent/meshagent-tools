@@ -129,7 +129,6 @@ def test_merge_container_mounts_preserves_config_mounts() -> None:
     assert merged is not None
     assert merged.model_dump(mode="json") == {
         "room": None,
-        "project": None,
         "images": None,
         "files": None,
         "empty_dirs": None,
@@ -138,6 +137,74 @@ def test_merge_container_mounts_preserves_config_mounts() -> None:
             {"path": "/override-config"},
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_container_shell_validation_errors_are_source_neutral() -> None:
+    tool = ProcessShellTool()
+    context = ToolContext(caller=None)
+
+    with pytest.raises(ValueError, match="_ContainerShellInput: commands is required"):
+        container_shell_module._validate_container_shell_input(  # type: ignore[attr-defined]
+            container_shell_module._ContainerShellInput,  # type: ignore[attr-defined]
+            {},
+        )
+
+    with pytest.raises(
+        ValueError, match="_ContainerShellInput: commands must be a list"
+    ):
+        await tool.execute(context, commands=None)  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="_ContainerShellInput: commands must contain at least one command",
+    ):
+        await tool.execute(context, commands=[])
+
+    with pytest.raises(
+        ValueError,
+        match="_ContainerShellInput: commands.0 must be a string",
+    ):
+        await tool.execute(context, commands=[1])  # type: ignore[list-item]
+
+    with pytest.raises(
+        ValueError,
+        match="_ContainerShellInput: timeout_ms must be an integer",
+    ):
+        await tool.execute(context, commands=["echo"], timeout_ms=1.2)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_managed_container_validation_errors_are_source_neutral() -> None:
+    room = _FakeRoom()
+    toolkit = ContainerToolkit(room=room)  # type: ignore[arg-type]
+    context = ToolContext(caller=None)
+
+    start_tool = next(tool for tool in toolkit.tools if tool.name == "start_container")
+    with pytest.raises(
+        ValueError,
+        match="_StartManagedContainerInput: env.0.key must be non-empty",
+    ):
+        await start_tool.execute(
+            context,
+            env=[{"key": "", "value": "v"}],  # type: ignore[list-item]
+        )
+
+    stop_tool = next(
+        tool for tool in toolkit.tools if tool.name == "stop_managed_container"
+    )
+    with pytest.raises(
+        ValueError,
+        match="_ManagedContainerSelector: container_id must be non-empty",
+    ):
+        await stop_tool.execute(context, container_id="")
+
+    run_tool = next(tool for tool in toolkit.tools if tool.name == "run_in_container")
+    with pytest.raises(
+        ValueError,
+        match="_ManagedContainerShellInput: container_id must be a string",
+    ):
+        await run_tool.execute(context, commands=["echo hi"], container_id=None)
 
 
 @pytest.mark.asyncio
