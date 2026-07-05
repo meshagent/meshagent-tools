@@ -169,6 +169,41 @@ async def test_remote_tool_start_stop_matches_python_lifecycle() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remote_toolkit_wrapper_attempts_all_remote_tool_starts_like_python_gather() -> (
+    None
+):
+    first = RemoteTool(
+        name="first",
+        input_schema={
+            "type": "object",
+            "required": [],
+            "additionalProperties": False,
+            "properties": {},
+        },
+    )
+    second = RemoteTool(
+        name="second",
+        input_schema={
+            "type": "object",
+            "required": [],
+            "additionalProperties": False,
+            "properties": {},
+        },
+    )
+    wrapper = _RemoteToolkitWrapper(
+        toolkit=Toolkit(name="remote", tools=[first, second])
+    )
+    first_room = object()
+    second_room = object()
+    await first.start(room=first_room)
+
+    with pytest.raises(RoomException, match="room is already started"):
+        await wrapper.start(room=second_room)
+
+    assert second.room is second_room
+
+
+@pytest.mark.asyncio
 async def test_remote_toolkit_wrapper_register_and_unregister_match_python_requests() -> (
     None
 ):
