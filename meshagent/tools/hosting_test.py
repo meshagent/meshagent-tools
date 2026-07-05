@@ -400,6 +400,11 @@ async def test_remote_toolkit_forwards_request_stream_to_tool() -> None:
     response = unpack_content(response_msg.data)
     assert isinstance(response, JsonContent)
     assert response.json == {"values": [{"step": 1}, "done"]}
+    await _wait_until(
+        lambda: toolkit._request_streams == {} and toolkit._pending_request_chunks == {}
+    )
+    assert toolkit._request_streams == {}
+    assert toolkit._pending_request_chunks == {}
 
 
 @pytest.mark.asyncio

@@ -2050,8 +2050,13 @@ async def test_toolkit_stream_input_validation_is_lazy_like_python():
     toolkit = Toolkit(name="test", tools=[_StreamTextEchoTool()])
     context = ToolContext(caller=object())
 
+    consumed: list[str] = []
+
     async def input_stream() -> AsyncIterable[Content]:
+        consumed.append("first")
         yield JsonContent(json={"wrong": True})
+        consumed.append("second")
+        yield TextContent(text="not consumed")
 
     result = await toolkit.invoke(
         context=context,
@@ -2070,6 +2075,7 @@ async def test_toolkit_stream_input_validation_is_lazy_like_python():
         ),
     ):
         await iterator.__anext__()
+    assert consumed == ["first"]
 
 
 @pytest.mark.asyncio
@@ -2097,6 +2103,60 @@ async def test_toolkit_stream_output_validation_is_lazy_like_python():
         ),
     ):
         await iterator.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_toolkit_stream_output_validation_stops_after_first_invalid_item_like_python():
+    consumed: list[str] = []
+
+    class BadThenGoodStreamOutputTool(ContentTool):
+        def __init__(self) -> None:
+            super().__init__(
+                name="bad_then_good_stream_output",
+                input_spec=ToolContentSpec(types=["text"], stream=True),
+                output_spec=ToolContentSpec(types=["text"], stream=True),
+            )
+
+        async def execute(
+            self,
+            *,
+            context: ToolContext,
+            input: AsyncIterable[Content] | Content,
+        ) -> AsyncIterable[Content] | Content:
+            del context, input
+
+            async def stream() -> AsyncIterable[Content]:
+                consumed.append("first")
+                yield JsonContent(json={"wrong": True})
+                consumed.append("second")
+                yield TextContent(text="not consumed")
+
+            return stream()
+
+    toolkit = Toolkit(name="test", tools=[BadThenGoodStreamOutputTool()])
+    context = ToolContext(caller=object())
+
+    async def input_stream() -> AsyncIterable[Content]:
+        yield TextContent(text="ok")
+
+    result = await toolkit.invoke(
+        context=context,
+        name="bad_then_good_stream_output",
+        input=input_stream(),
+        validation_mode="content_types",
+    )
+
+    assert isinstance(result, AsyncIterable)
+    iterator = result.__aiter__()
+    with pytest.raises(
+        toolkit_module.InvalidToolDataException,
+        match=(
+            "tool 'bad_then_good_stream_output' output content type 'json' "
+            "is not allowed by output_spec \\(text\\)"
+        ),
+    ):
+        await iterator.__anext__()
+    assert consumed == ["first"]
 
 
 @pytest.mark.asyncio
