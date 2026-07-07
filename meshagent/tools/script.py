@@ -336,7 +336,7 @@ class ScriptTool(LocalRoomTool):
 
 
 async def get_script_tools(room: RoomClient):
-    services = await room.services.list()
+    services = (await room.services.list()).services
 
     st = []
 
