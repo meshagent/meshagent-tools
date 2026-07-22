@@ -1,6 +1,5 @@
 import asyncio
 import json
-import mimetypes
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,6 +9,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 from meshagent.api.messaging import JsonContent, LinkContent, FileContent, TextContent
+from meshagent.api.mime_types import guess_mime_type
 from meshagent.api import RoomClient, RoomException
 from meshagent.api.room_server_client import StorageEntry
 
@@ -99,9 +99,7 @@ class StorageToolLocalMount(StorageToolMount):
     ) -> FileContent:
         local_path = _require_local_path(resolved)
         filename = os.path.basename(path)
-        mime_type, _ = mimetypes.guess_type(local_path)
-        if mime_type is None:
-            mime_type = "application/octet-stream"
+        mime_type = guess_mime_type(local_path) or "application/octet-stream"
         data = await _read_local_file(local_path)
         return FileContent(mime_type=mime_type, name=filename, data=data)
 

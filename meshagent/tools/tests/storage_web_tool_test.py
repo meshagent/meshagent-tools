@@ -1018,18 +1018,10 @@ async def test_read_file_returns_binary_file_content_unchanged(tmp_path) -> None
 
 
 @pytest.mark.asyncio
-async def test_read_file_treats_yaml_as_text_when_mime_is_unknown(
-    tmp_path, monkeypatch
-) -> None:
+async def test_read_file_treats_yaml_as_text(tmp_path) -> None:
     content = "name: webmaster\nversion: v1\n"
     file_path = tmp_path / "webmaster.yaml"
     file_path.write_text(content, encoding="utf-8")
-
-    monkeypatch.setattr(
-        storage_toolkit.mimetypes,
-        "guess_type",
-        lambda _path: (None, None),
-    )
 
     toolkit = StorageToolkit(
         read_only=True,
@@ -1054,18 +1046,10 @@ async def test_read_file_treats_yaml_as_text_when_mime_is_unknown(
 
 
 @pytest.mark.asyncio
-async def test_read_file_treats_json_as_text_when_mime_is_unknown(
-    tmp_path, monkeypatch
-) -> None:
+async def test_read_file_treats_json_as_text(tmp_path) -> None:
     content = '{"name":"webmaster","version":"v1"}\n'
     file_path = tmp_path / "webmaster.json"
     file_path.write_text(content, encoding="utf-8")
-
-    monkeypatch.setattr(
-        storage_toolkit.mimetypes,
-        "guess_type",
-        lambda _path: (None, None),
-    )
 
     toolkit = StorageToolkit(
         read_only=True,
@@ -1090,18 +1074,10 @@ async def test_read_file_treats_json_as_text_when_mime_is_unknown(
 
 
 @pytest.mark.asyncio
-async def test_read_file_trims_storage_extension_when_mime_is_unknown(
-    tmp_path, monkeypatch
-) -> None:
+async def test_read_file_trims_storage_extension(tmp_path) -> None:
     content = "name: webmaster\n"
     file_path = tmp_path / "webmaster.yaml"
     file_path.write_text(content, encoding="utf-8")
-
-    monkeypatch.setattr(
-        storage_toolkit.mimetypes,
-        "guess_type",
-        lambda _path: (None, None),
-    )
 
     toolkit = StorageToolkit(
         read_only=True,
@@ -1123,6 +1099,20 @@ async def test_read_file_trims_storage_extension_when_mime_is_unknown(
 
     assert isinstance(result, TextContent)
     assert result.text == content
+
+
+@pytest.mark.asyncio
+async def test_local_storage_mount_uses_meshagent_mime_type_overrides(tmp_path) -> None:
+    file_path = tmp_path / "source.dart"
+    file_path.write_text("void main() {}\n", encoding="utf-8")
+    mount = StorageToolLocalMount(path="/", local_path=str(tmp_path))
+    prepared = storage_toolkit._prepare_mounts([mount])
+    resolved = storage_toolkit._resolve_storage_path(prepared, "/source.dart")
+
+    result = await mount.read_file(resolved=resolved, path="/source.dart")
+
+    assert isinstance(result, FileContent)
+    assert result.mime_type == "text/x-dart"
 
 
 @pytest.mark.asyncio
@@ -1475,18 +1465,10 @@ def test_room_mount_stores_bound_room() -> None:
 
 
 @pytest.mark.asyncio
-async def test_grep_file_treats_yaml_as_text_when_mime_is_unknown(
-    tmp_path, monkeypatch
-) -> None:
+async def test_grep_file_treats_yaml_as_text(tmp_path) -> None:
     content = "kind: Service\nmetadata:\n  name: webmaster\n"
     file_path = tmp_path / "webmaster.yaml"
     file_path.write_text(content, encoding="utf-8")
-
-    monkeypatch.setattr(
-        storage_toolkit.mimetypes,
-        "guess_type",
-        lambda _path: (None, None),
-    )
 
     toolkit = StorageToolkit(
         read_only=True,
