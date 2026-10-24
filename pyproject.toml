@@ -15,6 +15,9 @@ dependencies = [
   "meshagent-api==0.55.1",
   "html-to-markdown~=2.24.3",
   "aiohttp[speedups]~=3.13.0",
+  # CVE-2026-111497: aiohttp speedups must use patched Brotli decoders.
+  "brotli>=1.2.1; platform_python_implementation == 'CPython'",
+  "brotlicffi>=1.2.1.0; platform_python_implementation != 'CPython'",
   "opentelemetry-distro~=0.59b0"
 ]
 dynamic = ["version", "readme"]
